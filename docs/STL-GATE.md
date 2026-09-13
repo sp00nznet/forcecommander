@@ -213,8 +213,23 @@ Miles, SMUSH and the MSVC 6 STL.
 
 ## What does NOT change
 
-The `.rpk` reader still has to be written either way. It is 274 MB holding every
-model, texture, animation and mission; RECON.md maps the header, the name list
-and the 7,000-entry string table, and the fixed-size records past the strings
-are not decoded. **No amount of DirectDraw makes game content appear without
-it.** That is the other long pole and it is independent of this decision.
+~~The `.rpk` reader still has to be written either way.~~ **Done** -- see the
+`tools/rpk.py` commit. The directory is decoded and the 9,554 members tile the
+274 MB archive with no gap and no overlap, so the format is no longer a
+question. It was never going to be the long pole it looks like: the game reads
+its own archive with its own lifted code, so what a host owes it is working file
+I/O, not a reimplementation. The reader earns its place as the thing that says
+whether the bytes the game gets are the bytes that are there.
+
+The decision above still stands on its own terms, and the evidence for it has
+only got stronger: of everything that blocked this session -- `_fullpath`,
+`_splitpath`, `sscanf`'s `%n` and its EOF return, `GetCurrentDirectoryA`
+returning a relative path, `WIN32_FIND_DATAA` leaking host stack contents into
+target memory, `CreateThread`'s argument index -- not one was a defect in the
+lifted code. Every one was an infidelity in a hand-written reimplementation of
+a Windows or CRT API. That is now sixteen for sixteen.
+
+The one thing a 32-bit host would NOT fix is the other finding of this session:
+`CreateThread` cannot be honoured while the machine state is a single set of
+globals, whatever word size the host is. That is orthogonal, and it is the next
+structural decision. See docs/STARTUP.md.
