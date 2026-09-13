@@ -949,7 +949,19 @@ static void dev_ok3(void) { RET(DI_OK); STDRET(3); }
 static void dev_ok4(void) { RET(DI_OK); STDRET(4); }
 static void dev_ok5(void) { RET(DI_OK); STDRET(5); }
 
+static void dinput_init(void);
+
+/*
+ * DirectInputCreateA(hinst, version, ppDI, punkOuter).
+ *
+ * dinput_init() had no caller at all: the vtables were built by a function
+ * nobody ran, so this handed back an object whose vptr was 0 and
+ * GamePPGlobalSysMouseManager faulted calling CreateDevice through it. The
+ * version probe only ever asked GetProcAddress for the address and never
+ * called it, so nothing had exercised the path.
+ */
 static void dinput_DirectInputCreateA(void) {
+    if (!g_vtbl_di) dinput_init();
     uint32_t o = obj_new(g_vtbl_di, KIND_DD);
     if (ARG(2)) MEM32(ARG(2)) = o;
     fprintf(stderr, "[di] DirectInputCreateA -> 0x%08X\n", o);
@@ -1110,6 +1122,30 @@ uint32_t ddraw_proc(const char* name) {
     return 0;
 }
 
+/*
+ * The DirectX entry points the game imports STATICALLY.
+ *
+ * Everything else in this file is reached either through a vtable slot or
+ * through the GetProcAddress hook above, so it took a fault to notice that
+ * DirectInputCreateA is also in the import table -- the version probe at
+ * 0x0076A6C0 asks GetProcAddress for it, but GamePPGlobalSysMouseManager
+ * calls the import. That went to the generated stub, which returns without
+ * filling the out pointer, so the manager kept a null IDirectInput and then
+ * called CreateDevice through it.
+ *
+ * It is the only one: DDRAW, DPLAY and D3D all arrive through LoadLibrary or
+ * CoCreateInstance. The table exists rather than a strcmp so the next one is
+ * one line.
+ */
+import_fn_t ddraw_static_import(const char* qualified) {
+    static const struct { const char* name; import_fn_t fn; } dx[] = {
+        { "DINPUT.dll!DirectInputCreateA", dinput_DirectInputCreateA },
+    };
+    for (unsigned i = 0; i < sizeof dx / sizeof dx[0]; i++)
+        if (!strcmp(dx[i].name, qualified)) return dx[i].fn;
+    return NULL;
+}
+
 /* ------------------------------------------- a generic COM object
 
  * The DirectX version probe needs CoCreateInstance(CLSID_DirectMusic) to
@@ -1213,6 +1249,180 @@ static void generic_init(void) {
  * that has to be guessed at, and an unknown class that returns an object whose
  * methods abort is more informative than one that is refused.
  */
+/* ----------------------------------------------------------- DirectSound
+ *
+ * The DirectX version probe at 0x0076A680 CoCreateInstances CLSID_DirectSound
+ * and calls Initialize on it, and a generic object has no slot 10 -- which is
+ * how this interface announced itself.
+ *
+ * ponytail: no audio. The game's actual sound path is Miles (mss32.dll), and
+ * these are the answers a working DirectSound with no output device would
+ * give: the object initialises, reports caps, hands out buffers that can be
+ * locked and written to and report themselves stopped. Nothing is played.
+ * Making sound means either loading the real mss32 on a 32-bit host or
+ * decoding the formats, and neither is on the way to a first frame.
+ */
+#define DS_OK             0
+#define DSERR_UNSUPPORTED 0x80004001u
+
+static uint32_t g_vtbl_ds, g_vtbl_dsbuf;
+static void dsound_init(void);
+
+/* --- IDirectSoundBuffer. Offsets are from dsound.h, and the purge counts are
+ *     the argument counts of those declarations. */
+#define DSB_BYTES(o)  MEM32((o) + 0x0C)      /* reuse the surface width slot */
+#define DSB_DATA(o)   MEM32((o) + 0x1C)      /* ...and the pixel-buffer slot */
+
+static void dsb_GetCaps(void) {
+    /* DSBCAPS: dwSize, dwFlags, dwBufferBytes, dwUnlockTransferRate,
+     * dwPlayCpuOverhead. */
+    uint32_t c = ARG(1);
+    if (c) {
+        MEM32(c + 0x00) = 20;
+        MEM32(c + 0x04) = 0;
+        MEM32(c + 0x08) = DSB_BYTES(ARG(0));
+        MEM32(c + 0x0C) = 0;
+        MEM32(c + 0x10) = 0;
+    }
+    RET(DS_OK); STDRET(2);
+}
+static void dsb_GetCurrentPosition(void) {
+    if (ARG(1)) MEM32(ARG(1)) = 0;
+    if (ARG(2)) MEM32(ARG(2)) = 0;
+    RET(DS_OK); STDRET(3);
+}
+static void dsb_GetFormat(void) {
+    /* WAVEFORMATEX for 16-bit stereo 22.05 kHz, which is what the game's own
+     * .wav assets are. A getter that leaves the struct alone gives the caller
+     * a sample rate off the stack. */
+    uint32_t w = ARG(1), cb = ARG(2);
+    if (w) {
+        MEM16(w + 0x00) = 1;               /* WAVE_FORMAT_PCM */
+        MEM16(w + 0x02) = 2;               /* channels */
+        MEM32(w + 0x04) = 22050;           /* samples/sec */
+        MEM32(w + 0x08) = 22050 * 4;       /* bytes/sec */
+        MEM16(w + 0x0C) = 4;               /* block align */
+        MEM16(w + 0x0E) = 16;              /* bits/sample */
+        MEM16(w + 0x10) = 0;               /* cbSize */
+    }
+    if (cb) MEM32(cb) = 18;
+    RET(DS_OK); STDRET(4);
+}
+static void dsb_GetVolume(void)   { if (ARG(1)) MEM32(ARG(1)) = 0; RET(DS_OK); STDRET(2); }
+static void dsb_GetPan(void)      { if (ARG(1)) MEM32(ARG(1)) = 0; RET(DS_OK); STDRET(2); }
+static void dsb_GetFrequency(void){ if (ARG(1)) MEM32(ARG(1)) = 22050; RET(DS_OK); STDRET(2); }
+static void dsb_GetStatus(void)   { if (ARG(1)) MEM32(ARG(1)) = 0; RET(DS_OK); STDRET(2); }
+static void dsb_Initialize(void)  { RET(DS_OK); STDRET(3); }
+
+/*
+ * Lock(offset, bytes, &ptr1, &len1, &ptr2, &len2, flags) -- the caller writes
+ * samples through the pointers it gets back, so they have to be real target
+ * memory. DSBLOCK_ENTIREBUFFER is 2.
+ */
+static void dsb_Lock(void) {
+    uint32_t o = ARG(0), off = ARG(1), bytes = ARG(2);
+    uint32_t total = DSB_BYTES(o);
+    if ((ARG(7) & 2u) || bytes > total) bytes = total;
+    if (off > total) off = 0;
+    if (off + bytes > total) bytes = total - off;
+    if (ARG(3)) MEM32(ARG(3)) = DSB_DATA(o) + off;
+    if (ARG(4)) MEM32(ARG(4)) = bytes;
+    if (ARG(5)) MEM32(ARG(5)) = 0;          /* no wrap-around second part */
+    if (ARG(6)) MEM32(ARG(6)) = 0;
+    RET(DSB_DATA(o) ? DS_OK : DSERR_UNSUPPORTED); STDRET(8);
+}
+static void dsb_Unlock(void)  { RET(DS_OK); STDRET(5); }
+static void dsb_Play(void)    { RET(DS_OK); STDRET(4); }
+static void dsb_Stop(void)    { RET(DS_OK); STDRET(1); }
+static void dsb_set1(void)    { RET(DS_OK); STDRET(2); }
+static void dsb_Restore(void) { RET(DS_OK); STDRET(1); }
+
+/* --- IDirectSound */
+
+static void ds_CreateSoundBuffer(void) {
+    /* DSBUFFERDESC: dwSize, dwFlags, dwBufferBytes, dwReserved, lpwfxFormat */
+    uint32_t desc = ARG(1);
+    uint32_t bytes = desc ? MEM32(desc + 0x08) : 0;
+    uint32_t o = obj_new(g_vtbl_dsbuf, KIND_DD);
+    if (!o) { if (ARG(2)) MEM32(ARG(2)) = 0; RET(DSERR_UNSUPPORTED); STDRET(4); return; }
+    /* A primary buffer is declared with dwBufferBytes 0; give it something
+     * lockable anyway, because the game sets a format on it and may write. */
+    if (!bytes) bytes = 4 * 22050;
+    DSB_BYTES(o) = bytes;
+    DSB_DATA(o) = crt_alloc(bytes);
+    if (DSB_DATA(o)) memset((void*)(uintptr_t)ADDR(DSB_DATA(o)), 0, bytes);
+    if (ARG(2)) MEM32(ARG(2)) = o;
+    RET(DS_OK); STDRET(4);
+}
+static void ds_GetCaps(void) {
+    /* DSCAPS, the fields anything reads: dwSize, dwFlags, dwMinSecondarySampleRate,
+     * dwMaxSecondarySampleRate, dwPrimaryBuffers, then the hardware counts. */
+    uint32_t c = ARG(1);
+    if (c) {
+        for (uint32_t i = 0; i < 0x60; i += 4) MEM32(c + i) = 0;
+        MEM32(c + 0x00) = 0x60;
+        MEM32(c + 0x04) = 0x00000200u | 0x00000020u;  /* SECONDARY16BIT|STEREO */
+        MEM32(c + 0x08) = 100;
+        MEM32(c + 0x0C) = 100000;
+        MEM32(c + 0x10) = 1;
+    }
+    RET(DS_OK); STDRET(2);
+}
+static void ds_DuplicateSoundBuffer(void) {
+    if (ARG(2)) MEM32(ARG(2)) = ARG(1);
+    if (ARG(1)) O_REF(ARG(1))++;
+    RET(DS_OK); STDRET(3);
+}
+static void ds_SetCooperativeLevel(void) { RET(DS_OK); STDRET(3); }
+static void ds_Compact(void)             { RET(DS_OK); STDRET(1); }
+static void ds_GetSpeakerConfig(void) {
+    if (ARG(1)) MEM32(ARG(1)) = 1;         /* DSSPEAKER_HEADPHONE-ish default */
+    RET(DS_OK); STDRET(2);
+}
+static void ds_SetSpeakerConfig(void)    { RET(DS_OK); STDRET(2); }
+static void ds_Initialize(void)          { RET(DS_OK); STDRET(2); }
+
+static void dsound_init(void) {
+    static const vtent_t ds[] = {
+        {m_QueryInterface,         "IDirectSound::QueryInterface"},
+        {m_AddRef,                 "IDirectSound::AddRef"},
+        {m_Release,                "IDirectSound::Release"},
+        {ds_CreateSoundBuffer,     "IDirectSound::CreateSoundBuffer"},
+        {ds_GetCaps,               "IDirectSound::GetCaps"},
+        {ds_DuplicateSoundBuffer,  "IDirectSound::DuplicateSoundBuffer"},
+        {ds_SetCooperativeLevel,   "IDirectSound::SetCooperativeLevel"},
+        {ds_Compact,               "IDirectSound::Compact"},
+        {ds_GetSpeakerConfig,      "IDirectSound::GetSpeakerConfig"},
+        {ds_SetSpeakerConfig,      "IDirectSound::SetSpeakerConfig"},
+        {ds_Initialize,            "IDirectSound::Initialize"},
+    };
+    static const vtent_t buf[] = {
+        {m_QueryInterface,         "IDirectSoundBuffer::QueryInterface"},
+        {m_AddRef,                 "IDirectSoundBuffer::AddRef"},
+        {m_Release,                "IDirectSoundBuffer::Release"},
+        {dsb_GetCaps,              "IDirectSoundBuffer::GetCaps"},
+        {dsb_GetCurrentPosition,   "IDirectSoundBuffer::GetCurrentPosition"},
+        {dsb_GetFormat,            "IDirectSoundBuffer::GetFormat"},
+        {dsb_GetVolume,            "IDirectSoundBuffer::GetVolume"},
+        {dsb_GetPan,               "IDirectSoundBuffer::GetPan"},
+        {dsb_GetFrequency,         "IDirectSoundBuffer::GetFrequency"},
+        {dsb_GetStatus,            "IDirectSoundBuffer::GetStatus"},
+        {dsb_Initialize,           "IDirectSoundBuffer::Initialize"},
+        {dsb_Lock,                 "IDirectSoundBuffer::Lock"},
+        {dsb_Play,                 "IDirectSoundBuffer::Play"},
+        {dsb_set1,                 "IDirectSoundBuffer::SetCurrentPosition"},
+        {dsb_set1,                 "IDirectSoundBuffer::SetFormat"},
+        {dsb_set1,                 "IDirectSoundBuffer::SetVolume"},
+        {dsb_set1,                 "IDirectSoundBuffer::SetPan"},
+        {dsb_set1,                 "IDirectSoundBuffer::SetFrequency"},
+        {dsb_Stop,                 "IDirectSoundBuffer::Stop"},
+        {dsb_Unlock,               "IDirectSoundBuffer::Unlock"},
+        {dsb_Restore,              "IDirectSoundBuffer::Restore"},
+    };
+    g_vtbl_ds = build_vtable(ds, sizeof ds / sizeof ds[0]);
+    g_vtbl_dsbuf = build_vtable(buf, sizeof buf / sizeof buf[0]);
+}
+
 uint32_t ddraw_cocreate(uint32_t clsid_guid) {
     if (!g_vtbl_generic) generic_init();
     /* The first dword is enough to tell the two DirectPlay classes apart. */
@@ -1220,6 +1430,10 @@ uint32_t ddraw_cocreate(uint32_t clsid_guid) {
     const char* what = "generic";
     if (clsid_guid == 0xD1EB6D20u)      { vt = g_vtbl_dplay; what = "IDirectPlay"; }
     else if (clsid_guid == 0x2FE8F810u) { vt = g_vtbl_lobby; what = "IDirectPlayLobby"; }
+    else if (clsid_guid == 0x47D4D946u) {          /* CLSID_DirectSound */
+        if (!g_vtbl_ds) dsound_init();
+        vt = g_vtbl_ds; what = "IDirectSound";
+    }
     uint32_t o = obj_new(vt, KIND_DD);
     fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> 0x%08X (%s)\n",
             clsid_guid, o, what);

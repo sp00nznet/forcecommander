@@ -56,10 +56,44 @@ uint32_t  g_icall_count = 0;
  * a line calls; this says which function.
  */
 #define VIS_RUN_LINE 0x00512170u
+#define VIS_STEP      0x005127E0u
 static int g_scripttrace;
 
+/*
+ * sub_005127E0 is GamePPSysCodeContainer's "run the current line":
+ *
+ *     if ([ctx+0x2C] >= [this+0x1C]) return 0;        // past the last line
+ *     entry = [this+0x18] + [ctx+0x2C] * 32;
+ *     return entry->fn(ctx, entry);
+ *
+ * so ecx is the code block, [ecx+0x18] its 32-byte line array and [ecx+0x1C]
+ * its line count, and the first argument is the execution context whose
+ * lineNumber_ is at +0x2C. Logging the pair says which line a block stopped
+ * on and whether it ran out or jumped away -- which no amount of reading the
+ * bytecode settles, because the loop opcodes are resolved to line numbers at
+ * compile time.
+ *
+ * sub_00512170 is one of the per-line thunks; [line+4] is the
+ * GamePPSysLibraryObj that implements it and [[line+4]] its vtable, which
+ * analysis/rtti.json maps to a class name.
+ */
 static void focom_trace_extra(uint32_t va) {
-    if (!g_scripttrace || va != VIS_RUN_LINE) return;
+    if (!g_scripttrace) return;
+    if (va == VIS_STEP) {
+        uint32_t ctx = MEM32(g_esp + 4);
+        uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
+        uint32_t ln = (ctx >= 0x00200000u) ? MEM32(ctx + 0x2C) : 0xFFFFFFFFu;
+        /* The line record is 32 bytes; [entry+4] is the library object that
+         * implements it and [[entry+4]] its vtable, which names the class. */
+        uint32_t entry = (g_ecx >= 0x00200000u && (int)ln >= 0 && ln < n)
+                       ? MEM32(g_ecx + 0x18) + ln * 32 : 0;
+        uint32_t obj = entry ? MEM32(entry + 4) : 0;
+        uint32_t vt = obj >= 0x00200000u ? MEM32(obj) : 0;
+        fprintf(stderr, "[step] t%lu block=%08X line=%d of %u vt=%08X\n",
+                GetCurrentThreadId(), g_ecx, (int)ln, n, vt);
+        return;
+    }
+    if (va != VIS_RUN_LINE) return;
     uint32_t line = MEM32(g_esp + 8);
     uint32_t obj = line >= 0x00200000u ? MEM32(line + 4) : 0;
     uint32_t vt = obj >= 0x00200000u ? MEM32(obj) : 0;
@@ -485,10 +519,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
-        else if (!strcmp(argv[i], "--scripttrace")) {
-            g_scripttrace = 1;
-            recomp_trace_extra = focom_trace_extra;
-        }
+        else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
         else if (!strcmp(argv[i], "--stlwatch") && i + 1 < argc)
             g_stlwatch = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--run")) run = 1;
@@ -622,6 +653,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    recomp_trace_extra = focom_trace_extra;
     host_create_window("Force Commander (recomp)");
 
     /* Entry point from the PE header, resolved through the dispatch table. */

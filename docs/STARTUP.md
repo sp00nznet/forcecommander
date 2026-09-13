@@ -167,23 +167,64 @@ pcrecomp; 5 bodies in this binary change and 431 instructions come back.
 
 ### What the run does now
 
+Sixty-nine distinct COM methods, in this order:
+
 ```
 SetDisplayMode 640x480 16bpp
-CreateSurface  640x480 16bpp caps=PRIMARY|FLIP|COMPLEX|3DDEVICE  -> primary + back buffer
+CreateSurface  640x480 16bpp PRIMARY|FLIP|COMPLEX|3DDEVICE -> primary + back buffer
 EnumZBufferFormats -> 3 formats
-CreateSurface  640x480 16bpp caps=ZBUFFER                        -> Z buffer, attached
-IDirect3D7::CreateDevice                                         -> device
-IDirect3DDevice7::GetCaps / EnumTextureFormats / GetRenderTarget
-Surface::Lock / Unlock, IDirect3DDevice7::Load                   -> texture upload
+CreateSurface  640x480 16bpp ZBUFFER              -> attached to the render target
+IDirect3D7::CreateDevice                          -> device
+GetCaps / EnumTextureFormats / GetRenderTarget / GetDDInterface
+Surface::Lock / Unlock, IDirect3DDevice7::Load    -> 32x32 and 128x128 textures
 SetRenderState / SetTexture / SetTextureStageState
 BeginStateBlock / EndStateBlock / SetMaterial
+GetDirect3D / CreateVertexBuffer
+GetDeviceIdentifier / TestCooperativeLevel / Surface::IsLost
+DirectInputCreateA -> CreateDevice / SetDataFormat / SetCooperativeLevel
+                      GetProperty / Acquire / GetDeviceState
+CoCreateInstance(CLSID_DirectSound) -> CreateSoundBuffer / SetFormat / SetVolume
+                                       Lock / Unlock / Play / Stop / Release
+CoCreateInstance(DirectPlay, DirectPlayLobby) -> EnumConnections,
+                      RegisterApplication, GetConnectionSettings
 ```
 
-`IDirect3DDevice7` is implemented: all 49 methods, with the purge count of
-each taken from the headers rather than guessed, state setters that remember
-and getters that hand back, a real `Clear` that clears the render target, and
-the `DrawPrimitive` family accepting and counting its vertices. Rasterising is
-the next job and it is a big one; this is the layer that had to exist first.
+`IDirect3DDevice7` is implemented: all 49 methods, with the purge count of each
+taken from the headers rather than guessed, state setters that remember and
+getters that hand back, a real `Clear` that clears the render target, and the
+`DrawPrimitive` family accepting and counting its vertices. `IDirectSound` and
+`IDirectSoundBuffer` are implemented the way a working sound card with no
+output device answers -- buffers that can be locked, written and reported
+stopped, and nothing played.
+
+Two more things had to be wired that only a fault revealed:
+
+- **`DINPUT.dll!DirectInputCreateA` is a static import.** Everything else in
+  DirectX arrives through LoadLibrary or CoCreateInstance, so the shim was
+  reachable only through the GetProcAddress hook; the version probe asks
+  GetProcAddress for it, but `GamePPGlobalSysMouseManager` calls the import.
+  That went to the generated stub, which returns without filling the out
+  pointer.
+- **`dinput_init()` had no caller at all.** The DirectInput vtables were built
+  by a function nobody ran, so the object came back with a vptr of 0. Nothing
+  had exercised the path, because the probe only ever asked for the address.
+
+### And still nothing is drawn
+
+`BeginScene`, `Clear`, `DrawPrimitive` and `Flip` are never called. The section
+now runs **68 frames** instead of 61, does all of the above, and still ends.
+
+The line-level trace (`--scripttrace`, which prints the block, the line number
+and the class of each line's library object) puts the stop precisely: a block
+of **25 lines stops after line 6**. It does not run out of lines; it stops. Line
+4 of that block is a `GamePPGlobalThread` operation and line 6 a function
+defined in the workspace rather than a built-in. That is the next thread to
+pull: what line 6 calls, and why the block never reaches line 7.
+
+Also outstanding: the run now faults during *shutdown*, in `sub_0074E020`
+reading through a low pointer with `free` as the last import. That is a
+teardown-order problem, not a blocker, and it only appears because the game now
+has a renderer to tear down.
 
 ### What is not the cause
 

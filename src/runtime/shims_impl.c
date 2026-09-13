@@ -757,13 +757,21 @@ static void u32_CreateDialogParamA(void) {
  * this work. If a thread turns up that spins instead, it needs a real
  * per-thread register file and the generated code has to change with it.
  *
- * That ceiling was measured and is NOT what ends the game's first section. A
- * coarse preemption -- hand the machine over every N function entries if
- * anyone is waiting -- was written, tried at N = 500, 5,000 and 50,000, and
- * changed nothing: the main thread is never starved, because it has 7.8
- * million calls of its own to make (compiling 1,713 object templates out of
- * 9,554 archive members) while the worker runs the section's script. The
+ * That ceiling was measured TWICE and is not what ends the game's first
+ * section. A coarse preemption -- hand the machine over every N function
+ * entries if anyone is waiting -- was written and tried at N = 500 through
+ * 50,000, first when the game got two threads up and again when RE3D pushed it
+ * to four. Neither time did anything change, and the second time the reason
+ * was clear: of the four Ronin workers, two carry the load and the other two
+ * run 13 and 8 lifted calls each and then park in their own
+ * WaitForSingleObject(mutex, 100) queue-consumer loop. That is not starvation,
+ * it is an idle worker with nothing queued, and it is the right behaviour. The
  * preemption was deleted rather than left in as dead weight in the hot path.
+ *
+ * The lesson is about the evidence, not the threading: a thread with no
+ * "routine RETURNED" line has not necessarily failed to run, and the way to
+ * tell is the per-thread call count in a --calltrace, not the absence of a
+ * log line.
  */
 #define MACH_STACK_BASE 0x08000000u      /* below the heap, above the image */
 #define MACH_STACK_SIZE 0x00100000u      /* 1 MB each, as the main one is */
@@ -969,7 +977,9 @@ static void k32_CreateThread(void) {
 }
 static void k32_ResumeThread(void) {
     HANDLE h = i2h(ARG(0));
-    RET(h ? (uint32_t)ResumeThread(h) : 0xFFFFFFFFu); STDRET(1);
+    DWORD prev = h ? ResumeThread(h) : 0xFFFFFFFFu;
+    fprintf(stderr, "[k32] ResumeThread(h=%u) -> %ld\n", ARG(0), (long)prev);
+    RET((uint32_t)prev); STDRET(1);
 }
 
 
@@ -1032,9 +1042,15 @@ extern const unsigned g_crt_shim_count;
 extern const struct { const char* name; import_fn_t fn; } g_stl_shims[];
 extern const unsigned g_stl_shim_count;
 
+import_fn_t ddraw_static_import(const char* qualified);  /* ddraw_shims.c */
+
 import_fn_t shim_real_import(const char* qualified_name) {
     for (unsigned i = 0; i < sizeof(g_real) / sizeof(g_real[0]); i++)
         if (!strcmp(g_real[i].name, qualified_name)) return g_real[i].fn;
+    {   /* the DirectX entry points the game imports statically */
+        import_fn_t f = ddraw_static_import(qualified_name);
+        if (f) return f;
+    }
     for (unsigned i = 0; i < g_crt_shim_count; i++)
         if (!strcmp(g_crt_shims[i].name, qualified_name)) return g_crt_shims[i].fn;
     for (unsigned i = 0; i < g_stl_shim_count; i++)
