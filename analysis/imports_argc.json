@@ -1,0 +1,2458 @@
+{
+ "0x007C3000": {
+  "dll": "ADVAPI32.dll",
+  "name": "RegCloseKey",
+  "real": "RegCloseKey",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3004": {
+  "dll": "ADVAPI32.dll",
+  "name": "RegCreateKeyExA",
+  "real": "RegCreateKeyExA",
+  "argc": 9,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3008": {
+  "dll": "ADVAPI32.dll",
+  "name": "RegQueryValueExA",
+  "real": "RegQueryValueExA",
+  "argc": 6,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C300C": {
+  "dll": "ADVAPI32.dll",
+  "name": "RegOpenKeyExA",
+  "real": "RegOpenKeyExA",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3010": {
+  "dll": "ADVAPI32.dll",
+  "name": "RegSetValueExA",
+  "real": "RegSetValueExA",
+  "argc": 6,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3018": {
+  "dll": "DINPUT.dll",
+  "name": "DirectInputCreateA",
+  "real": "DirectInputCreateA",
+  "argc": null,
+  "conv": null,
+  "src": "unresolved"
+ },
+ "0x007C3020": {
+  "dll": "GDI32.dll",
+  "name": "GetStockObject",
+  "real": "GetStockObject",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3024": {
+  "dll": "GDI32.dll",
+  "name": "StretchBlt",
+  "real": "StretchBlt",
+  "argc": 11,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3028": {
+  "dll": "GDI32.dll",
+  "name": "DeleteDC",
+  "real": "DeleteDC",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C302C": {
+  "dll": "GDI32.dll",
+  "name": "SetBkMode",
+  "real": "SetBkMode",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3030": {
+  "dll": "GDI32.dll",
+  "name": "CreateCompatibleDC",
+  "real": "CreateCompatibleDC",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3034": {
+  "dll": "GDI32.dll",
+  "name": "SelectObject",
+  "real": "SelectObject",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3038": {
+  "dll": "GDI32.dll",
+  "name": "SetTextColor",
+  "real": "SetTextColor",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C303C": {
+  "dll": "GDI32.dll",
+  "name": "CreateFontA",
+  "real": "CreateFontA",
+  "argc": 14,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3040": {
+  "dll": "GDI32.dll",
+  "name": "DeleteObject",
+  "real": "DeleteObject",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3044": {
+  "dll": "GDI32.dll",
+  "name": "TextOutA",
+  "real": "TextOutA",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3048": {
+  "dll": "GDI32.dll",
+  "name": "GetTextExtentPoint32A",
+  "real": "GetTextExtentPoint32A",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3050": {
+  "dll": "KERNEL32.dll",
+  "name": "Sleep",
+  "real": "Sleep",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3054": {
+  "dll": "KERNEL32.dll",
+  "name": "FormatMessageA",
+  "real": "FormatMessageA",
+  "argc": 7,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3058": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateFileA",
+  "real": "CreateFileA",
+  "argc": 7,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C305C": {
+  "dll": "KERNEL32.dll",
+  "name": "GetProcAddress",
+  "real": "GetProcAddress",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3060": {
+  "dll": "KERNEL32.dll",
+  "name": "FreeLibrary",
+  "real": "FreeLibrary",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3064": {
+  "dll": "KERNEL32.dll",
+  "name": "GetCurrentThreadId",
+  "real": "GetCurrentThreadId",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3068": {
+  "dll": "KERNEL32.dll",
+  "name": "lstrlenA",
+  "real": "lstrlenA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C306C": {
+  "dll": "KERNEL32.dll",
+  "name": "GetVolumeInformationA",
+  "real": "GetVolumeInformationA",
+  "argc": 8,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3070": {
+  "dll": "KERNEL32.dll",
+  "name": "GetLastError",
+  "real": "GetLastError",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3074": {
+  "dll": "KERNEL32.dll",
+  "name": "GetModuleFileNameA",
+  "real": "GetModuleFileNameA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3078": {
+  "dll": "KERNEL32.dll",
+  "name": "LocalFree",
+  "real": "LocalFree",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C307C": {
+  "dll": "KERNEL32.dll",
+  "name": "LoadLibraryA",
+  "real": "LoadLibraryA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3080": {
+  "dll": "KERNEL32.dll",
+  "name": "GetVersionExA",
+  "real": "GetVersionExA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3084": {
+  "dll": "KERNEL32.dll",
+  "name": "GetTickCount",
+  "real": "GetTickCount",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3088": {
+  "dll": "KERNEL32.dll",
+  "name": "CloseHandle",
+  "real": "CloseHandle",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C308C": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateMutexA",
+  "real": "CreateMutexA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3090": {
+  "dll": "KERNEL32.dll",
+  "name": "QueryPerformanceFrequency",
+  "real": "QueryPerformanceFrequency",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3094": {
+  "dll": "KERNEL32.dll",
+  "name": "QueryPerformanceCounter",
+  "real": "QueryPerformanceCounter",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3098": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateEventA",
+  "real": "CreateEventA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C309C": {
+  "dll": "KERNEL32.dll",
+  "name": "GetLocalTime",
+  "real": "GetLocalTime",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30A0": {
+  "dll": "KERNEL32.dll",
+  "name": "Heap32ListNext",
+  "real": "Heap32ListNext",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30A4": {
+  "dll": "KERNEL32.dll",
+  "name": "Heap32Next",
+  "real": "Heap32Next",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30A8": {
+  "dll": "KERNEL32.dll",
+  "name": "Heap32First",
+  "real": "Heap32First",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30AC": {
+  "dll": "KERNEL32.dll",
+  "name": "Heap32ListFirst",
+  "real": "Heap32ListFirst",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30B0": {
+  "dll": "KERNEL32.dll",
+  "name": "Module32Next",
+  "real": "Module32Next",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30B4": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateToolhelp32Snapshot",
+  "real": "CreateToolhelp32Snapshot",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30B8": {
+  "dll": "KERNEL32.dll",
+  "name": "GlobalMemoryStatus",
+  "real": "GlobalMemoryStatus",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30BC": {
+  "dll": "KERNEL32.dll",
+  "name": "Module32First",
+  "real": "Module32First",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30C0": {
+  "dll": "KERNEL32.dll",
+  "name": "WaitForSingleObject",
+  "real": "WaitForSingleObject",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30C4": {
+  "dll": "KERNEL32.dll",
+  "name": "SetEvent",
+  "real": "SetEvent",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30C8": {
+  "dll": "KERNEL32.dll",
+  "name": "GetSystemInfo",
+  "real": "GetSystemInfo",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30CC": {
+  "dll": "KERNEL32.dll",
+  "name": "ResetEvent",
+  "real": "ResetEvent",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30D0": {
+  "dll": "KERNEL32.dll",
+  "name": "ResumeThread",
+  "real": "ResumeThread",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30D4": {
+  "dll": "KERNEL32.dll",
+  "name": "GetCurrentThread",
+  "real": "GetCurrentThread",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30D8": {
+  "dll": "KERNEL32.dll",
+  "name": "LeaveCriticalSection",
+  "real": "LeaveCriticalSection",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30DC": {
+  "dll": "KERNEL32.dll",
+  "name": "EnterCriticalSection",
+  "real": "EnterCriticalSection",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30E0": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateThread",
+  "real": "CreateThread",
+  "argc": 6,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30E4": {
+  "dll": "KERNEL32.dll",
+  "name": "DeleteCriticalSection",
+  "real": "DeleteCriticalSection",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30E8": {
+  "dll": "KERNEL32.dll",
+  "name": "ReleaseMutex",
+  "real": "ReleaseMutex",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30EC": {
+  "dll": "KERNEL32.dll",
+  "name": "InitializeCriticalSection",
+  "real": "InitializeCriticalSection",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30F0": {
+  "dll": "KERNEL32.dll",
+  "name": "SetFilePointer",
+  "real": "SetFilePointer",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30F4": {
+  "dll": "KERNEL32.dll",
+  "name": "ReadFile",
+  "real": "ReadFile",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30F8": {
+  "dll": "KERNEL32.dll",
+  "name": "PulseEvent",
+  "real": "PulseEvent",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C30FC": {
+  "dll": "KERNEL32.dll",
+  "name": "SetEndOfFile",
+  "real": "SetEndOfFile",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3100": {
+  "dll": "KERNEL32.dll",
+  "name": "DeleteFileA",
+  "real": "DeleteFileA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3104": {
+  "dll": "KERNEL32.dll",
+  "name": "WriteFile",
+  "real": "WriteFile",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3108": {
+  "dll": "KERNEL32.dll",
+  "name": "FindClose",
+  "real": "FindClose",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C310C": {
+  "dll": "KERNEL32.dll",
+  "name": "FindNextFileA",
+  "real": "FindNextFileA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3110": {
+  "dll": "KERNEL32.dll",
+  "name": "FindFirstFileA",
+  "real": "FindFirstFileA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3114": {
+  "dll": "KERNEL32.dll",
+  "name": "CreateDirectoryA",
+  "real": "CreateDirectoryA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3118": {
+  "dll": "KERNEL32.dll",
+  "name": "RemoveDirectoryA",
+  "real": "RemoveDirectoryA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C311C": {
+  "dll": "KERNEL32.dll",
+  "name": "MoveFileA",
+  "real": "MoveFileA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3120": {
+  "dll": "KERNEL32.dll",
+  "name": "SetFileTime",
+  "real": "SetFileTime",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3124": {
+  "dll": "KERNEL32.dll",
+  "name": "SetFileAttributesA",
+  "real": "SetFileAttributesA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3128": {
+  "dll": "KERNEL32.dll",
+  "name": "CopyFileA",
+  "real": "CopyFileA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C312C": {
+  "dll": "KERNEL32.dll",
+  "name": "OutputDebugStringA",
+  "real": "OutputDebugStringA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3130": {
+  "dll": "KERNEL32.dll",
+  "name": "FileTimeToSystemTime",
+  "real": "FileTimeToSystemTime",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3134": {
+  "dll": "KERNEL32.dll",
+  "name": "FileTimeToLocalFileTime",
+  "real": "FileTimeToLocalFileTime",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3138": {
+  "dll": "KERNEL32.dll",
+  "name": "LocalFileTimeToFileTime",
+  "real": "LocalFileTimeToFileTime",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C313C": {
+  "dll": "KERNEL32.dll",
+  "name": "SystemTimeToFileTime",
+  "real": "SystemTimeToFileTime",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3140": {
+  "dll": "KERNEL32.dll",
+  "name": "GetModuleHandleA",
+  "real": "GetModuleHandleA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3144": {
+  "dll": "KERNEL32.dll",
+  "name": "GetStartupInfoA",
+  "real": "GetStartupInfoA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3148": {
+  "dll": "KERNEL32.dll",
+  "name": "GetTempFileNameA",
+  "real": "GetTempFileNameA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3150": {
+  "dll": "MSVCP60.dll",
+  "name": "??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@ABV01@@Z",
+  "real": "??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@ABV01@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3154": {
+  "dll": "MSVCP60.dll",
+  "name": "?copy@?$char_traits@D@std@@SAPADPADPBDI@Z",
+  "real": "?copy@?$char_traits@D@std@@SAPADPADPBDI@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3158": {
+  "dll": "MSVCP60.dll",
+  "name": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@0@Z",
+  "real": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@0@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C315C": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_fstream@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "real": "??1?$basic_fstream@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3160": {
+  "dll": "MSVCP60.dll",
+  "name": "??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z",
+  "real": "??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3164": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_ios@DU?$char_traits@D@std@@@std@@IAE@XZ",
+  "real": "??0?$basic_ios@DU?$char_traits@D@std@@@std@@IAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3168": {
+  "dll": "MSVCP60.dll",
+  "name": "?clear@ios_base@std@@QAEXH_N@Z",
+  "real": "?clear@ios_base@std@@QAEXH_N@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C316C": {
+  "dll": "MSVCP60.dll",
+  "name": "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@PBD@Z",
+  "real": "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@PBD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3170": {
+  "dll": "MSVCP60.dll",
+  "name": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBDABV10@@Z",
+  "real": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBDABV10@@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3174": {
+  "dll": "MSVCP60.dll",
+  "name": "?find_first_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "real": "?find_first_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3178": {
+  "dll": "MSVCP60.dll",
+  "name": "?max_size@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIXZ",
+  "real": "?max_size@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIXZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C317C": {
+  "dll": "MSVCP60.dll",
+  "name": "?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "real": "?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3180": {
+  "dll": "MSVCP60.dll",
+  "name": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@D@Z",
+  "real": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@D@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3184": {
+  "dll": "MSVCP60.dll",
+  "name": "??_F?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXXZ",
+  "real": "??_F?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXXZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3188": {
+  "dll": "MSVCP60.dll",
+  "name": "??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "real": "??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C318C": {
+  "dll": "MSVCP60.dll",
+  "name": "??Ostd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "real": "??Ostd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3190": {
+  "dll": "MSVCP60.dll",
+  "name": "??8std@@YA_NPBDABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z",
+  "real": "??8std@@YA_NPBDABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3194": {
+  "dll": "MSVCP60.dll",
+  "name": "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIABV12@II@Z",
+  "real": "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIABV12@II@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3198": {
+  "dll": "MSVCP60.dll",
+  "name": "?find_last_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "real": "?find_last_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C319C": {
+  "dll": "MSVCP60.dll",
+  "name": "?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "real": "?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31A0": {
+  "dll": "MSVCP60.dll",
+  "name": "?copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPADII@Z",
+  "real": "?copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPADII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31A4": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z",
+  "real": "?_Copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31A8": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Xran@std@@YAXXZ",
+  "real": "?_Xran@std@@YAXXZ",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C31AC": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ",
+  "real": "?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31B0": {
+  "dll": "MSVCP60.dll",
+  "name": "?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z",
+  "real": "?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31B4": {
+  "dll": "MSVCP60.dll",
+  "name": "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z",
+  "real": "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C31B8": {
+  "dll": "MSVCP60.dll",
+  "name": "??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@",
+  "real": "??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C31BC": {
+  "dll": "MSVCP60.dll",
+  "name": "?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ",
+  "real": "?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31C0": {
+  "dll": "MSVCP60.dll",
+  "name": "??1locale@std@@QAE@XZ",
+  "real": "??1locale@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31C4": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "real": "??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31C8": {
+  "dll": "MSVCP60.dll",
+  "name": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z",
+  "real": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31CC": {
+  "dll": "MSVCP60.dll",
+  "name": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z",
+  "real": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31D0": {
+  "dll": "MSVCP60.dll",
+  "name": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z",
+  "real": "?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31D4": {
+  "dll": "MSVCP60.dll",
+  "name": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@",
+  "real": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C31D8": {
+  "dll": "MSVCP60.dll",
+  "name": "?length@?$char_traits@D@std@@SAIPBD@Z",
+  "real": "?length@?$char_traits@D@std@@SAIPBD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C31DC": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Xlen@std@@YAXXZ",
+  "real": "?_Xlen@std@@YAXXZ",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C31E0": {
+  "dll": "MSVCP60.dll",
+  "name": "??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z",
+  "real": "??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31E4": {
+  "dll": "MSVCP60.dll",
+  "name": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z",
+  "real": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31E8": {
+  "dll": "MSVCP60.dll",
+  "name": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@",
+  "real": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C31EC": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z",
+  "real": "??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31F0": {
+  "dll": "MSVCP60.dll",
+  "name": "??0ios_base@std@@IAE@XZ",
+  "real": "??0ios_base@std@@IAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31F4": {
+  "dll": "MSVCP60.dll",
+  "name": "??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@",
+  "real": "??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C31F8": {
+  "dll": "MSVCP60.dll",
+  "name": "?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z",
+  "real": "?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C31FC": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z",
+  "real": "??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3200": {
+  "dll": "MSVCP60.dll",
+  "name": "??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@",
+  "real": "??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3204": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "real": "??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3208": {
+  "dll": "MSVCP60.dll",
+  "name": "?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z",
+  "real": "?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C320C": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "real": "??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3210": {
+  "dll": "MSVCP60.dll",
+  "name": "??_D?$basic_fstream@DU?$char_traits@D@std@@@std@@QAEXXZ",
+  "real": "??_D?$basic_fstream@DU?$char_traits@D@std@@@std@@QAEXXZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3214": {
+  "dll": "MSVCP60.dll",
+  "name": "??1ios_base@std@@UAE@XZ",
+  "real": "??1ios_base@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3218": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_ios@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "real": "??1?$basic_ios@DU?$char_traits@D@std@@@std@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C321C": {
+  "dll": "MSVCP60.dll",
+  "name": "??1Init@ios_base@std@@QAE@XZ",
+  "real": "??1Init@ios_base@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3220": {
+  "dll": "MSVCP60.dll",
+  "name": "??1_Winit@std@@QAE@XZ",
+  "real": "??1_Winit@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3224": {
+  "dll": "MSVCP60.dll",
+  "name": "??0_Winit@std@@QAE@XZ",
+  "real": "??0_Winit@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3228": {
+  "dll": "MSVCP60.dll",
+  "name": "?find_first_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "real": "?find_first_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C322C": {
+  "dll": "MSVCP60.dll",
+  "name": "??0Init@ios_base@std@@QAE@XZ",
+  "real": "??0Init@ios_base@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3230": {
+  "dll": "MSVCP60.dll",
+  "name": "?substr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBE?AV12@II@Z",
+  "real": "?substr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBE?AV12@II@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3234": {
+  "dll": "MSVCP60.dll",
+  "name": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@PBD@Z",
+  "real": "??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@PBD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3238": {
+  "dll": "MSVCP60.dll",
+  "name": "??0_Lockit@std@@QAE@XZ",
+  "real": "??0_Lockit@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C323C": {
+  "dll": "MSVCP60.dll",
+  "name": "?assign@?$char_traits@D@std@@SAXAADABD@Z",
+  "real": "?assign@?$char_traits@D@std@@SAXAADABD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3240": {
+  "dll": "MSVCP60.dll",
+  "name": "??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "real": "??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3244": {
+  "dll": "MSVCP60.dll",
+  "name": "??1_Lockit@std@@QAE@XZ",
+  "real": "??1_Lockit@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3248": {
+  "dll": "MSVCP60.dll",
+  "name": "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB",
+  "real": "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C324C": {
+  "dll": "MSVCP60.dll",
+  "name": "?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z",
+  "real": "?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3250": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z",
+  "real": "?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3254": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z",
+  "real": "?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3258": {
+  "dll": "MSVCP60.dll",
+  "name": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z",
+  "real": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C325C": {
+  "dll": "MSVCP60.dll",
+  "name": "??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ",
+  "real": "??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3260": {
+  "dll": "MSVCP60.dll",
+  "name": "?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB",
+  "real": "?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3264": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z",
+  "real": "?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3268": {
+  "dll": "MSVCP60.dll",
+  "name": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z",
+  "real": "?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C326C": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z",
+  "real": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3270": {
+  "dll": "MSVCP60.dll",
+  "name": "??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z",
+  "real": "??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3274": {
+  "dll": "MSVCP60.dll",
+  "name": "??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z",
+  "real": "??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C3278": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@PBDABV?$allocator@D@1@@Z",
+  "real": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@PBDABV?$allocator@D@1@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C327C": {
+  "dll": "MSVCP60.dll",
+  "name": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV01@@Z",
+  "real": "??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV01@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3280": {
+  "dll": "MSVCP60.dll",
+  "name": "??A?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEABDI@Z",
+  "real": "??A?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEABDI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3284": {
+  "dll": "MSVCP60.dll",
+  "name": "?nothrow@std@@3Unothrow_t@1@B",
+  "real": "?nothrow@std@@3Unothrow_t@1@B",
+  "argc": 0,
+  "conv": "data",
+  "src": "mangled-data-symbol"
+ },
+ "0x007C3288": {
+  "dll": "MSVCP60.dll",
+  "name": "??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "real": "??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C328C": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Refcnt@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEAAEPBD@Z",
+  "real": "?_Refcnt@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEAAEPBD@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3290": {
+  "dll": "MSVCP60.dll",
+  "name": "?_Freeze@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ",
+  "real": "?_Freeze@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3294": {
+  "dll": "MSVCP60.dll",
+  "name": "?resize@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXI@Z",
+  "real": "?resize@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXI@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C329C": {
+  "dll": "MSVCRT.dll",
+  "name": "?terminate@@YAXXZ",
+  "real": "?terminate@@YAXXZ",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "mangled-convention"
+ },
+ "0x007C32A0": {
+  "dll": "MSVCRT.dll",
+  "name": "_onexit",
+  "real": "_onexit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32A4": {
+  "dll": "MSVCRT.dll",
+  "name": "__dllonexit",
+  "real": "__dllonexit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32A8": {
+  "dll": "MSVCRT.dll",
+  "name": "_except_handler3",
+  "real": "_except_handler3",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32AC": {
+  "dll": "MSVCRT.dll",
+  "name": "__set_app_type",
+  "real": "__set_app_type",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32B0": {
+  "dll": "MSVCRT.dll",
+  "name": "__p__fmode",
+  "real": "__p__fmode",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32B4": {
+  "dll": "MSVCRT.dll",
+  "name": "__p__commode",
+  "real": "__p__commode",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32B8": {
+  "dll": "MSVCRT.dll",
+  "name": "_adjust_fdiv",
+  "real": "_adjust_fdiv",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32BC": {
+  "dll": "MSVCRT.dll",
+  "name": "__setusermatherr",
+  "real": "__setusermatherr",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32C0": {
+  "dll": "MSVCRT.dll",
+  "name": "_initterm",
+  "real": "_initterm",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32C4": {
+  "dll": "MSVCRT.dll",
+  "name": "__getmainargs",
+  "real": "__getmainargs",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32C8": {
+  "dll": "MSVCRT.dll",
+  "name": "exit",
+  "real": "exit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32CC": {
+  "dll": "MSVCRT.dll",
+  "name": "_XcptFilter",
+  "real": "_XcptFilter",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32D0": {
+  "dll": "MSVCRT.dll",
+  "name": "_exit",
+  "real": "_exit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32D4": {
+  "dll": "MSVCRT.dll",
+  "name": "??1type_info@@UAE@XZ",
+  "real": "??1type_info@@UAE@XZ",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C32D8": {
+  "dll": "MSVCRT.dll",
+  "name": "fgets",
+  "real": "fgets",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32DC": {
+  "dll": "MSVCRT.dll",
+  "name": "fseek",
+  "real": "fseek",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32E0": {
+  "dll": "MSVCRT.dll",
+  "name": "ftell",
+  "real": "ftell",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32E4": {
+  "dll": "MSVCRT.dll",
+  "name": "isalpha",
+  "real": "isalpha",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32E8": {
+  "dll": "MSVCRT.dll",
+  "name": "strncmp",
+  "real": "strncmp",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32EC": {
+  "dll": "MSVCRT.dll",
+  "name": "mktime",
+  "real": "mktime",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32F0": {
+  "dll": "MSVCRT.dll",
+  "name": "_controlfp",
+  "real": "_controlfp",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32F4": {
+  "dll": "MSVCRT.dll",
+  "name": "_splitpath",
+  "real": "_splitpath",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32F8": {
+  "dll": "MSVCRT.dll",
+  "name": "_fullpath",
+  "real": "_fullpath",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C32FC": {
+  "dll": "MSVCRT.dll",
+  "name": "memchr",
+  "real": "memchr",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3300": {
+  "dll": "MSVCRT.dll",
+  "name": "atoi",
+  "real": "atoi",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3304": {
+  "dll": "MSVCRT.dll",
+  "name": "strncpy",
+  "real": "strncpy",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3308": {
+  "dll": "MSVCRT.dll",
+  "name": "_stricmp",
+  "real": "_stricmp",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C330C": {
+  "dll": "MSVCRT.dll",
+  "name": "vsprintf",
+  "real": "vsprintf",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3310": {
+  "dll": "MSVCRT.dll",
+  "name": "fprintf",
+  "real": "fprintf",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3314": {
+  "dll": "MSVCRT.dll",
+  "name": "fopen",
+  "real": "fopen",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3318": {
+  "dll": "MSVCRT.dll",
+  "name": "fread",
+  "real": "fread",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C331C": {
+  "dll": "MSVCRT.dll",
+  "name": "fclose",
+  "real": "fclose",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3320": {
+  "dll": "MSVCRT.dll",
+  "name": "ceil",
+  "real": "ceil",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3324": {
+  "dll": "MSVCRT.dll",
+  "name": "_purecall",
+  "real": "_purecall",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3328": {
+  "dll": "MSVCRT.dll",
+  "name": "sscanf",
+  "real": "sscanf",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C332C": {
+  "dll": "MSVCRT.dll",
+  "name": "_CIacos",
+  "real": "_CIacos",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3330": {
+  "dll": "MSVCRT.dll",
+  "name": "_CIasin",
+  "real": "_CIasin",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3334": {
+  "dll": "MSVCRT.dll",
+  "name": "__RTDynamicCast",
+  "real": "__RTDynamicCast",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3338": {
+  "dll": "MSVCRT.dll",
+  "name": "memmove",
+  "real": "memmove",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C333C": {
+  "dll": "MSVCRT.dll",
+  "name": "sprintf",
+  "real": "sprintf",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3340": {
+  "dll": "MSVCRT.dll",
+  "name": "_ftol",
+  "real": "_ftol",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3344": {
+  "dll": "MSVCRT.dll",
+  "name": "??2@YAPAXI@Z",
+  "real": "??2@YAPAXI@Z",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3348": {
+  "dll": "MSVCRT.dll",
+  "name": "__CxxFrameHandler",
+  "real": "__CxxFrameHandler",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C334C": {
+  "dll": "MSVCRT.dll",
+  "name": "free",
+  "real": "free",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3350": {
+  "dll": "MSVCRT.dll",
+  "name": "malloc",
+  "real": "malloc",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3354": {
+  "dll": "MSVCRT.dll",
+  "name": "_CxxThrowException",
+  "real": "_CxxThrowException",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3358": {
+  "dll": "MSVCRT.dll",
+  "name": "_acmdln",
+  "real": "_acmdln",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C335C": {
+  "dll": "MSVCRT.dll",
+  "name": "atof",
+  "real": "atof",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3360": {
+  "dll": "MSVCRT.dll",
+  "name": "bsearch",
+  "real": "bsearch",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3364": {
+  "dll": "MSVCRT.dll",
+  "name": "_strnicmp",
+  "real": "_strnicmp",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3368": {
+  "dll": "MSVCRT.dll",
+  "name": "_CIfmod",
+  "real": "_CIfmod",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C336C": {
+  "dll": "MSVCRT.dll",
+  "name": "??8type_info@@QBEHABV0@@Z",
+  "real": "??8type_info@@QBEHABV0@@Z",
+  "argc": null,
+  "conv": "thiscall",
+  "src": "mangled-convention"
+ },
+ "0x007C3370": {
+  "dll": "MSVCRT.dll",
+  "name": "floor",
+  "real": "floor",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3374": {
+  "dll": "MSVCRT.dll",
+  "name": "toupper",
+  "real": "toupper",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3378": {
+  "dll": "MSVCRT.dll",
+  "name": "_CIpow",
+  "real": "_CIpow",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C337C": {
+  "dll": "MSVCRT.dll",
+  "name": "__RTtypeid",
+  "real": "__RTtypeid",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3380": {
+  "dll": "MSVCRT.dll",
+  "name": "isdigit",
+  "real": "isdigit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3384": {
+  "dll": "MSVCRT.dll",
+  "name": "isxdigit",
+  "real": "isxdigit",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3388": {
+  "dll": "MSVCRT.dll",
+  "name": "tolower",
+  "real": "tolower",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C338C": {
+  "dll": "MSVCRT.dll",
+  "name": "isupper",
+  "real": "isupper",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3390": {
+  "dll": "MSVCRT.dll",
+  "name": "islower",
+  "real": "islower",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3394": {
+  "dll": "MSVCRT.dll",
+  "name": "isalnum",
+  "real": "isalnum",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C3398": {
+  "dll": "MSVCRT.dll",
+  "name": "isspace",
+  "real": "isspace",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C339C": {
+  "dll": "MSVCRT.dll",
+  "name": "_callnewh",
+  "real": "_callnewh",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C33A0": {
+  "dll": "MSVCRT.dll",
+  "name": "isprint",
+  "real": "isprint",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C33A4": {
+  "dll": "MSVCRT.dll",
+  "name": "realloc",
+  "real": "realloc",
+  "argc": 0,
+  "conv": "cdecl",
+  "src": "crt-undecorated-export"
+ },
+ "0x007C33AC": {
+  "dll": "SHELL32.dll",
+  "name": "ShellExecuteA",
+  "real": "ShellExecuteA",
+  "argc": 6,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33B4": {
+  "dll": "USER32.dll",
+  "name": "CreateWindowExA",
+  "real": "CreateWindowExA",
+  "argc": 12,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33B8": {
+  "dll": "USER32.dll",
+  "name": "CharPrevA",
+  "real": "CharPrevA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33BC": {
+  "dll": "USER32.dll",
+  "name": "PostThreadMessageA",
+  "real": "PostThreadMessageA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33C0": {
+  "dll": "USER32.dll",
+  "name": "SetWindowTextA",
+  "real": "SetWindowTextA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33C4": {
+  "dll": "USER32.dll",
+  "name": "SetWindowPos",
+  "real": "SetWindowPos",
+  "argc": 7,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33C8": {
+  "dll": "USER32.dll",
+  "name": "GetSystemMetrics",
+  "real": "GetSystemMetrics",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33CC": {
+  "dll": "USER32.dll",
+  "name": "EndPaint",
+  "real": "EndPaint",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33D0": {
+  "dll": "USER32.dll",
+  "name": "CreateDialogParamA",
+  "real": "CreateDialogParamA",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33D4": {
+  "dll": "USER32.dll",
+  "name": "SetCursor",
+  "real": "SetCursor",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33D8": {
+  "dll": "USER32.dll",
+  "name": "PeekMessageA",
+  "real": "PeekMessageA",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33DC": {
+  "dll": "USER32.dll",
+  "name": "GetWindowTextA",
+  "real": "GetWindowTextA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33E0": {
+  "dll": "USER32.dll",
+  "name": "MsgWaitForMultipleObjects",
+  "real": "MsgWaitForMultipleObjects",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33E4": {
+  "dll": "USER32.dll",
+  "name": "DispatchMessageA",
+  "real": "DispatchMessageA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33E8": {
+  "dll": "USER32.dll",
+  "name": "GetMessageA",
+  "real": "GetMessageA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33EC": {
+  "dll": "USER32.dll",
+  "name": "TranslateMessage",
+  "real": "TranslateMessage",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33F0": {
+  "dll": "USER32.dll",
+  "name": "RegisterClassExA",
+  "real": "RegisterClassExA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33F4": {
+  "dll": "USER32.dll",
+  "name": "CharNextA",
+  "real": "CharNextA",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33F8": {
+  "dll": "USER32.dll",
+  "name": "ShowWindow",
+  "real": "ShowWindow",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C33FC": {
+  "dll": "USER32.dll",
+  "name": "GetWindowRect",
+  "real": "GetWindowRect",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3400": {
+  "dll": "USER32.dll",
+  "name": "BeginPaint",
+  "real": "BeginPaint",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3404": {
+  "dll": "USER32.dll",
+  "name": "GetUpdateRect",
+  "real": "GetUpdateRect",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3408": {
+  "dll": "USER32.dll",
+  "name": "LoadBitmapA",
+  "real": "LoadBitmapA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C340C": {
+  "dll": "USER32.dll",
+  "name": "LoadCursorA",
+  "real": "LoadCursorA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3410": {
+  "dll": "USER32.dll",
+  "name": "MessageBoxA",
+  "real": "MessageBoxA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3414": {
+  "dll": "USER32.dll",
+  "name": "UpdateWindow",
+  "real": "UpdateWindow",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3418": {
+  "dll": "USER32.dll",
+  "name": "IsWindowVisible",
+  "real": "IsWindowVisible",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C341C": {
+  "dll": "USER32.dll",
+  "name": "SetParent",
+  "real": "SetParent",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3420": {
+  "dll": "USER32.dll",
+  "name": "DestroyWindow",
+  "real": "DestroyWindow",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3424": {
+  "dll": "USER32.dll",
+  "name": "IsWindow",
+  "real": "IsWindow",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3428": {
+  "dll": "USER32.dll",
+  "name": "IsIconic",
+  "real": "IsIconic",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C342C": {
+  "dll": "USER32.dll",
+  "name": "GetDesktopWindow",
+  "real": "GetDesktopWindow",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3430": {
+  "dll": "USER32.dll",
+  "name": "ClientToScreen",
+  "real": "ClientToScreen",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3434": {
+  "dll": "USER32.dll",
+  "name": "SetCursorPos",
+  "real": "SetCursorPos",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3438": {
+  "dll": "USER32.dll",
+  "name": "GetKeyState",
+  "real": "GetKeyState",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C343C": {
+  "dll": "USER32.dll",
+  "name": "ShowCursor",
+  "real": "ShowCursor",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3440": {
+  "dll": "USER32.dll",
+  "name": "GetParent",
+  "real": "GetParent",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3444": {
+  "dll": "USER32.dll",
+  "name": "SetWindowPlacement",
+  "real": "SetWindowPlacement",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3448": {
+  "dll": "USER32.dll",
+  "name": "GetWindowLongA",
+  "real": "GetWindowLongA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C344C": {
+  "dll": "USER32.dll",
+  "name": "GetWindowPlacement",
+  "real": "GetWindowPlacement",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3450": {
+  "dll": "USER32.dll",
+  "name": "SetWindowLongA",
+  "real": "SetWindowLongA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3454": {
+  "dll": "USER32.dll",
+  "name": "GetClientRect",
+  "real": "GetClientRect",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3458": {
+  "dll": "USER32.dll",
+  "name": "DefWindowProcA",
+  "real": "DefWindowProcA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C345C": {
+  "dll": "USER32.dll",
+  "name": "SetPropA",
+  "real": "SetPropA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3460": {
+  "dll": "USER32.dll",
+  "name": "GetPropA",
+  "real": "GetPropA",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3468": {
+  "dll": "WINMM.dll",
+  "name": "timeSetEvent",
+  "real": "timeSetEvent",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C346C": {
+  "dll": "WINMM.dll",
+  "name": "timeEndPeriod",
+  "real": "timeEndPeriod",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3470": {
+  "dll": "WINMM.dll",
+  "name": "timeGetTime",
+  "real": "timeGetTime",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3474": {
+  "dll": "WINMM.dll",
+  "name": "mciSendStringA",
+  "real": "mciSendStringA",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3478": {
+  "dll": "WINMM.dll",
+  "name": "PlaySoundA",
+  "real": "PlaySoundA",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C347C": {
+  "dll": "WINMM.dll",
+  "name": "timeKillEvent",
+  "real": "timeKillEvent",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3480": {
+  "dll": "WINMM.dll",
+  "name": "timeBeginPeriod",
+  "real": "timeBeginPeriod",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C3484": {
+  "dll": "WINMM.dll",
+  "name": "timeGetDevCaps",
+  "real": "timeGetDevCaps",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C348C": {
+  "dll": "mss32.dll",
+  "name": "_AIL_startup@0",
+  "real": "_AIL_startup@0",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C3490": {
+  "dll": "mss32.dll",
+  "name": "_AIL_digital_handle_release@4",
+  "real": "_AIL_digital_handle_release@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C3494": {
+  "dll": "mss32.dll",
+  "name": "_AIL_digital_handle_reacquire@4",
+  "real": "_AIL_digital_handle_reacquire@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C3498": {
+  "dll": "mss32.dll",
+  "name": "_AIL_allocate_sample_handle@4",
+  "real": "_AIL_allocate_sample_handle@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C349C": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_DirectSound_HWND@8",
+  "real": "_AIL_set_DirectSound_HWND@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34A0": {
+  "dll": "mss32.dll",
+  "name": "_AIL_last_error@0",
+  "real": "_AIL_last_error@0",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34A4": {
+  "dll": "mss32.dll",
+  "name": "_AIL_waveOutOpen@16",
+  "real": "_AIL_waveOutOpen@16",
+  "argc": 4,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34A8": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_preference@8",
+  "real": "_AIL_set_preference@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34AC": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_sample_pan@8",
+  "real": "_AIL_set_sample_pan@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34B0": {
+  "dll": "mss32.dll",
+  "name": "_AIL_shutdown@0",
+  "real": "_AIL_shutdown@0",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34B4": {
+  "dll": "mss32.dll",
+  "name": "_AIL_waveOutClose@4",
+  "real": "_AIL_waveOutClose@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34B8": {
+  "dll": "mss32.dll",
+  "name": "_AIL_release_sample_handle@4",
+  "real": "_AIL_release_sample_handle@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34BC": {
+  "dll": "mss32.dll",
+  "name": "_AIL_get_DirectSound_info@12",
+  "real": "_AIL_get_DirectSound_info@12",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34C0": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_sample_playback_rate@8",
+  "real": "_AIL_set_sample_playback_rate@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34C4": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_named_sample_file@20",
+  "real": "_AIL_set_named_sample_file@20",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34C8": {
+  "dll": "mss32.dll",
+  "name": "_AIL_start_sample@4",
+  "real": "_AIL_start_sample@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34CC": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_sample_loop_count@8",
+  "real": "_AIL_set_sample_loop_count@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34D0": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_sample_file@12",
+  "real": "_AIL_set_sample_file@12",
+  "argc": 3,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34D4": {
+  "dll": "mss32.dll",
+  "name": "_AIL_set_sample_volume@8",
+  "real": "_AIL_set_sample_volume@8",
+  "argc": 2,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34D8": {
+  "dll": "mss32.dll",
+  "name": "_AIL_end_sample@4",
+  "real": "_AIL_end_sample@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34DC": {
+  "dll": "mss32.dll",
+  "name": "_AIL_init_sample@4",
+  "real": "_AIL_init_sample@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34E0": {
+  "dll": "mss32.dll",
+  "name": "_AIL_sample_status@4",
+  "real": "_AIL_sample_status@4",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "decorated-name"
+ },
+ "0x007C34E8": {
+  "dll": "ole32.dll",
+  "name": "CoInitialize",
+  "real": "CoInitialize",
+  "argc": 1,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C34EC": {
+  "dll": "ole32.dll",
+  "name": "CoUninitialize",
+  "real": "CoUninitialize",
+  "argc": 0,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ },
+ "0x007C34F0": {
+  "dll": "ole32.dll",
+  "name": "CoCreateInstance",
+  "real": "CoCreateInstance",
+  "argc": 5,
+  "conv": "stdcall",
+  "src": "sdk-import-lib"
+ }
+}

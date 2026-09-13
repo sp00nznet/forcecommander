@@ -60,3 +60,13 @@ extracted/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Generated lifted C and the host build: both regenerate from the binary,
+# and the lift is millions of lines.
+src/recomp/gen/
+build/
+work/
+analysis/disasm.log
+analysis/functions.json
+# Copied from ../tools/runtime/recomp32/ at build time, not ours to fork.
+src/runtime/recomp_types.h
