@@ -85,7 +85,11 @@ import_fn_t ddraw_lookup_method(uint32_t va) {
     static unsigned char seen[METHOD_MAX];
     if (g_trace || !seen[i]) {
         seen[i] = 1;
-        fprintf(stderr, "[com] %s\n", g_method_names[i]);
+        /* g_cur_func is the lifted function that made the call: a shim is not
+         * lifted and never overwrites it, so it still names the caller. That
+         * is the one fact needed to go and read the decision being made. */
+        fprintf(stderr, "[com] %-38s <- 0x%08X\n",
+                g_method_names[i], g_cur_func);
     }
     return g_methods[i];
 }
@@ -133,6 +137,7 @@ const char* ddraw_method_name(uint32_t va) {
 #define DDSCAPS_FLIP           0x00000010u
 
 static uint32_t g_vtbl_dd, g_vtbl_surf;
+uint32_t ddraw_d3d_vtable(void);   /* defined near the Direct3D block */
 static uint32_t g_primary;             /* the surface presented to the window */
 static int      g_mode_w = 640, g_mode_h = 480, g_mode_bpp = 16;
 
@@ -231,7 +236,16 @@ static void m_QueryInterface(void) {
                   g == 0xBB223240u ||  /* IID_IDirect3D3 */
                   g == 0xF5049E77u);   /* IID_IDirect3D7 */
 
-    if (is_d3d || (!is_dd && !is_surf)) {
+    if (is_d3d) {
+        uint32_t vt = ddraw_d3d_vtable();
+        uint32_t d = obj_new(vt, KIND_DD);
+        if (ppv) MEM32(ppv) = d;
+        fprintf(stderr, "[com] QueryInterface {%08X-...} -> IDirect3D7 "
+                        "0x%08X\n", g, d);
+        RET(d ? DD_OK : E_NOINTERFACE); STDRET(3);
+        return;
+    }
+    if (!is_dd && !is_surf) {
         if (ppv) MEM32(ppv) = 0;
         fprintf(stderr, "[com] QueryInterface {%08X-...} -> E_NOINTERFACE%s\n",
                 g, is_d3d ? "  (Direct3D refused: use the software path)" : "");
@@ -329,7 +343,9 @@ static void fill_caps(uint32_t c) {
     if (!c) return;
     for (uint32_t i = 0; i < 380; i += 4) MEM32(c + i) = 0;
     MEM32(c + 0x00) = 380;
-    MEM32(c + 0x04) = DDCAPS_BLT | DDCAPS_BLTQUEUE | DDCAPS_BLTFOURCC |
+    MEM32(c + 0x04) = 0x00000001u /* DDCAPS_3D: worth 0x200 of the mask the
+                                     acceptance check at 0x007318C0 builds */ |
+                      DDCAPS_BLT | DDCAPS_BLTQUEUE | DDCAPS_BLTFOURCC |
                       DDCAPS_BLTSTRETCH | DDCAPS_GDI | DDCAPS_CANBLTSYSMEM |
                       DDCAPS_COLORKEY | DDCAPS_CANCLIP |
                       DDCAPS_CANCLIPSTRETCHED | DDCAPS_PALETTE |
@@ -1025,4 +1041,82 @@ uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name) {
     for (unsigned i = 0; i < g_method_n; i++)
         if (g_methods[i] == fn) return METHOD_BASE + i * 4;
     return method(fn, name);
+}
+
+/* ------------------------------------------------------------ Direct3D 7
+
+ * The device-acceptance check at 0x007318C0 builds a capability mask and
+ * DDCAPS_3D is worth 0x200 of it. Without 3D the mask comes back 0x103 and the
+ * device is rejected, so the software-only route does not exist as cleanly as
+ * RE3D's CDD7MemRenderer suggested -- the game wants a 3D device.
+ *
+ * IDirect3D7 is small (8 methods). IDirect3DDevice7 is not, so rather than
+ * guess at 40 methods its vtable names each slot and aborts: the [com] line
+ * printed before the abort says precisely which method the game reached, which
+ * turns "implement Direct3D" into an ordered list taken from a real run.
+ */
+static uint32_t g_vtbl_d3d, g_vtbl_d3ddev;
+
+static void d3d_EnumDevices(void) {
+    /* Offer no devices: the caller's own "no hardware device" path is better
+     * than a fabricated device description it will then try to use. If the
+     * game needs one, this is where it goes, and the trace will say so. */
+    fprintf(stderr, "[d3d] EnumDevices -> no devices offered\n");
+    RET(DD_OK); STDRET(3);
+}
+
+static void d3d_CreateDevice(void) {
+    uint32_t o = obj_new(g_vtbl_d3ddev, KIND_DD);
+    if (ARG(3)) MEM32(ARG(3)) = o;
+    fprintf(stderr, "[d3d] CreateDevice -> 0x%08X\n", o);
+    RET(DD_OK); STDRET(4);
+}
+
+static void d3d_CreateVertexBuffer(void) {
+    uint32_t o = obj_new(g_vtbl_generic ? g_vtbl_generic : g_vtbl_dd, KIND_DD);
+    if (ARG(2)) MEM32(ARG(2)) = o;
+    RET(DD_OK); STDRET(4);
+}
+
+static void d3d_EnumZBufferFormats(void) { RET(DD_OK); STDRET(4); }
+static void d3d_EvictManagedTextures(void) { RET(DD_OK); STDRET(1); }
+
+#define D3DDEV_SLOTS 48
+
+static void d3ddev_unimplemented(void) {
+    fprintf(stderr,
+        "\n[d3d] unimplemented IDirect3DDevice7 method -- the [com] line above\n"
+        "      names its slot. Implement it in ddraw_shims.c; no purge count is\n"
+        "      known, so returning would corrupt the stack instead.\n");
+    abort();
+}
+
+static void d3d_init(void) {
+    static const vtent_t d3d[] = {
+        {m_QueryInterface,        "IDirect3D7::QueryInterface"},
+        {m_AddRef,                "IDirect3D7::AddRef"},
+        {m_Release,               "IDirect3D7::Release"},
+        {d3d_EnumDevices,         "IDirect3D7::EnumDevices"},
+        {d3d_CreateDevice,        "IDirect3D7::CreateDevice"},
+        {d3d_CreateVertexBuffer,  "IDirect3D7::CreateVertexBuffer"},
+        {d3d_EnumZBufferFormats,  "IDirect3D7::EnumZBufferFormats"},
+        {d3d_EvictManagedTextures,"IDirect3D7::EvictManagedTextures"},
+    };
+    g_vtbl_d3d = build_vtable(d3d, sizeof(d3d) / sizeof(d3d[0]));
+
+    uint32_t v = crt_alloc(D3DDEV_SLOTS * 4 + 4);
+    MEM32(v + 0) = method(m_QueryInterface, "IDirect3DDevice7::QueryInterface");
+    MEM32(v + 4) = method(m_AddRef,         "IDirect3DDevice7::AddRef");
+    MEM32(v + 8) = method(m_Release,        "IDirect3DDevice7::Release");
+    for (unsigned i = 3; i < D3DDEV_SLOTS; i++) {
+        static char buf[D3DDEV_SLOTS][32];
+        snprintf(buf[i], sizeof(buf[i]), "IDirect3DDevice7::slot%u", i);
+        MEM32(v + i * 4) = method(d3ddev_unimplemented, buf[i]);
+    }
+    g_vtbl_d3ddev = v;
+}
+
+uint32_t ddraw_d3d_vtable(void) {
+    if (!g_vtbl_d3d) d3d_init();
+    return g_vtbl_d3d;
 }
