@@ -33,6 +33,10 @@
 #include "recomp_types.h"
 #include "imports.h"
 
+/* --trace turns on the per-call shim log. Off by default: the config parse
+ * alone prints a line per token, which buries the rare events that matter. */
+int g_shim_trace = 0;
+
 /* ------------------------------------------------------------- allocator */
 
 /*
@@ -258,10 +262,52 @@ static void crt_fopen(void) {
     char p[MAX_PATH * 2];
     const char* hp = host_path(ARG(0), p, sizeof(p));
     FILE* f = hp ? fopen(hp, ARGP(1,char)) : NULL;
-    if (!f) fprintf(stderr, "[crt] fopen(\"%s\") failed\n", hp ? hp : "(null)");
+    if (!f)
+        fprintf(stderr, "[crt] fopen(\"%s\") failed\n", hp ? hp : "(null)");
+    else if (g_shim_trace)
+        fprintf(stderr, "[crt] fopen(\"%s\") ok\n", hp);
     RET(f2i(f)); CDECLRET();
 }
 static void crt_fclose(void) { FILE* f = i2f(ARG(0)); RET(f ? (uint32_t)fclose(f) : 0xFFFFFFFFu); CDECLRET(); }
+/*
+ * void _splitpath(const char* path, char* drive, char* dir, char* fname, char* ext)
+ *
+ * Four OUT buffers and no return value, which is exactly the shape that a
+ * do-nothing stub gets wrong invisibly: the game reads back whatever was on its
+ * stack and uses it as a pointer. It faulted reading 0x6F636572 -- the ASCII
+ * "reco" of a nearby string literal -- for precisely that reason. Any of the
+ * four may be NULL and must then be skipped.
+ */
+static void crt_splitpath(void) {
+    char path[MAX_PATH * 2];
+    char drv[8], dir[MAX_PATH], fn[MAX_PATH], ex[MAX_PATH];
+    const char* src = (const char*)(uintptr_t)ADDR(ARG(0));
+    snprintf(path, sizeof(path), "%s", src ? src : "");
+    _splitpath(path, drv, dir, fn, ex);
+    const char* part[4] = { drv, dir, fn, ex };
+    for (int k = 0; k < 4; k++)
+        if (ARG(k + 1)) strcpy((char*)(uintptr_t)ADDR(ARG(k + 1)), part[k]);
+    RET(0); CDECLRET();
+}
+/*
+ * char* _fullpath(char* abs, const char* rel, size_t max)
+ *
+ * WinMain calls this to turn its own relative data paths into absolute ones and
+ * then opens what comes back, so it has to resolve against g_gamedir exactly
+ * the way host_path() does -- resolving against the host cwd would hand the
+ * game a path its later fopen cannot find. Returning 0 (the stub's behaviour)
+ * makes the game give up and exit(0) before it ever opens the .rpk.
+ */
+static void crt_fullpath(void) {
+    char rel[MAX_PATH * 2], full[MAX_PATH * 2];
+    const char* r = host_path(ARG(1), rel, sizeof(rel));
+    if (!r || !_fullpath(full, r, sizeof(full))) { RET(0); CDECLRET(); return; }
+    uint32_t out = ARG(0), max = ARG(2);
+    if (!out) { max = (uint32_t)strlen(full) + 1; out = crt_alloc(max); }
+    if (!out || !max) { RET(0); CDECLRET(); return; }
+    snprintf((char*)(uintptr_t)ADDR(out), max, "%s", full);
+    RET(out); CDECLRET();
+}
 static void crt_fread(void)  {
     FILE* f = i2f(ARG(3));
     RET(f ? (uint32_t)fread(ARGP(0,char), ARG(1), ARG(2), f) : 0); CDECLRET();
@@ -331,6 +377,7 @@ static void crt_getmainargs(void) {
 
 static void crt_exit(void) {
     fprintf(stderr, "[crt] exit(%u) called by lifted code\n", ARG(0));
+    recomp_dump_trace("exit");
     crt_heap_stats();
     exit((int)ARG(0));
 }
@@ -346,21 +393,719 @@ static void crt_floor(void)  { double a; uint64_t u = MEM64(g_esp+4); memcpy(&a,
 static void crt_ceil(void)   { double a; uint64_t u = MEM64(g_esp+4); memcpy(&a,&u,8); fpush(ceil(a)); CDECLRET(); }
 static void crt_ftol(void)   { double a = fpeek(0); fpop(); RET((uint32_t)(int32_t)a); CDECLRET(); }
 
+/* shims_impl.c owns the handle table; a host HANDLE is 64 bits. */
+uint32_t h2i(HANDLE h);
+HANDLE   i2h(uint32_t i);
+
+/* ----------------------------------------------------------- USER32, part 1
+
+ * MessageBoxA first, because the game reports every startup failure through it
+ * ("Failed to create file system registry object!", "Initialization error")
+ * and a stub returning 0 threw that text away -- the most useful diagnostic in
+ * the binary was being discarded on the way out.
+ *
+ * It prints rather than opening a modal box: a dialog in the middle of bring-up
+ * blocks the run and there is nobody to click it.
+ */
+static void u32_MessageBoxA(void) {
+    const char* text = ARG(1) ? (const char*)(uintptr_t)ADDR(ARG(1)) : "";
+    const char* cap  = ARG(2) ? (const char*)(uintptr_t)ADDR(ARG(2)) : "";
+    fprintf(stderr, "[msgbox] %s: %s\n", cap, text);
+    RET(1);                       /* IDOK */
+    STDRET(4);
+}
+static void u32_GetSystemMetrics(void) { RET((uint32_t)GetSystemMetrics((int)ARG(0))); STDRET(1); }
+static void u32_GetDesktopWindow(void) { RET(h2i(GetDesktopWindow())); STDRET(0); }
+static void u32_CharNextA(void) {
+    const char* p = ARG(0) ? (const char*)(uintptr_t)ADDR(ARG(0)) : NULL;
+    RET(p && *p ? ARG(0) + 1 : ARG(0)); STDRET(1);
+}
+static void u32_CharPrevA(void) {
+    RET(ARG(1) > ARG(0) ? ARG(1) - 1 : ARG(0)); STDRET(2);
+}
+static void u32_ShowCursor(void) { RET((uint32_t)ShowCursor((BOOL)ARG(0))); STDRET(1); }
+static void u32_LoadCursorA(void) { RET(h2i(LoadCursorA(NULL, (LPCSTR)(uintptr_t)ARG(1)))); STDRET(2); }
+static void u32_SetCursor(void) { RET(h2i(SetCursor((HCURSOR)i2h(ARG(0))))); STDRET(1); }
+static void u32_GetKeyState(void) { RET((uint32_t)(int32_t)GetKeyState((int)ARG(0))); STDRET(1); }
+static void u32_GetStockObject(void) { RET(h2i(GetStockObject((int)ARG(0)))); STDRET(1); }
+
+/* ------------------------------------------------- MSVCRT C++ runtime
+
+ * RTTI, bsearch and the exception entry points. These are the last group of
+ * stubs that fail silently rather than loudly: bsearch returning 0 means "not
+ * found" for every lookup the game makes, and __RTDynamicCast returning 0 means
+ * every dynamic_cast fails, so the game takes its not-this-type branch and
+ * leaves objects unconstructed. Both surface much later as a string with no
+ * storage.
+ *
+ * The MSVC 6 RTTI layout, all in the mapped image and all 32-bit:
+ *
+ *   vfptr[-1] -> CompleteObjectLocator
+ *      +0x00 signature   +0x04 offset (of the vfptr in the complete object)
+ *      +0x08 cdOffset    +0x0C TypeDescriptor*   +0x10 ClassHierarchyDescriptor*
+ *   ClassHierarchyDescriptor
+ *      +0x00 signature   +0x04 attributes
+ *      +0x08 numBaseClasses                      +0x0C BaseClassDescriptor**
+ *   BaseClassDescriptor
+ *      +0x00 TypeDescriptor*     +0x04 numContainedBases
+ *      +0x08 mdisp  +0x0C pdisp  +0x10 vdisp     +0x14 attributes
+ *   TypeDescriptor
+ *      +0x00 vfptr  +0x04 spare  +0x08 decorated name, NUL-terminated
+ */
+#define COL_OFFSET(c)      MEM32((c) + 0x04)
+#define COL_TYPEDESC(c)    MEM32((c) + 0x0C)
+#define COL_HIERARCHY(c)   MEM32((c) + 0x10)
+#define CHD_NUMBASES(h)    MEM32((h) + 0x08)
+#define CHD_BASEARRAY(h)   MEM32((h) + 0x0C)
+#define BCD_TYPEDESC(b)    MEM32((b) + 0x00)
+#define BCD_MDISP(b)       MEM32((b) + 0x08)
+#define BCD_PDISP(b)       MEM32((b) + 0x0C)
+#define BCD_VDISP(b)       MEM32((b) + 0x10)
+#define TD_NAME(t)         ((const char*)(uintptr_t)ADDR((t) + 0x08))
+
+/* __thiscall receives `this` in ecx, same as stl_shims.c. */
+#define THIS (g_ecx)
+
+static void crt_purecall(void) {
+    fprintf(stderr, "[cxx] pure virtual call from 0x%08X\n", g_cur_func);
+    recomp_dump_trace("purecall");
+    abort();
+}
+static void crt_callnewh(void) { RET(0); CDECLRET(); }          /* no new_handler */
+static void crt_terminate(void) {
+    fprintf(stderr, "[cxx] std::terminate from 0x%08X\n", g_cur_func);
+    recomp_dump_trace("terminate");
+    abort();
+}
+static void crt_typeinfo_dtor(void) { RET(THIS); STDRET(0); }   /* nothing owned */
+static void crt_typeinfo_eq(void) {
+    /* type_info::operator==: within one image the descriptors are unique, so
+     * pointer equality is enough, but the names settle a tie across a
+     * duplicated descriptor. */
+    uint32_t a = THIS, b = ARG(0);
+    int eq = (a == b);
+    if (!eq && a && b) eq = !strcmp((const char*)(uintptr_t)ADDR(a + 0x08),
+                                    (const char*)(uintptr_t)ADDR(b + 0x08));
+    RET(eq ? 1 : 0); STDRET(1);
+}
+
+/* The locator sitting one slot before an object's vftable. */
+static uint32_t rtti_locator(uint32_t obj, int32_t vfdelta) {
+    if (!obj) return 0;
+    uint32_t vfptr = MEM32(obj + (uint32_t)vfdelta);
+    if (vfptr < 0x00400000u) return 0;
+    return MEM32(vfptr - 4);
+}
+
+static void crt_RTtypeid(void) {
+    uint32_t col = rtti_locator(ARG(0), 0);
+    RET(col ? COL_TYPEDESC(col) : 0); CDECLRET();
+}
+
+static void crt_RTDynamicCast(void) {
+    uint32_t obj = ARG(0), target = ARG(3);
+    int32_t vfdelta = (int32_t)ARG(1);
+    uint32_t col = rtti_locator(obj, vfdelta);
+    if (!col || !target) { RET(0); CDECLRET(); return; }
+
+    /* The complete object starts `offset` bytes before the subobject holding
+     * the vfptr we just read. */
+    uint32_t complete = obj + (uint32_t)vfdelta - COL_OFFSET(col);
+    uint32_t hier = COL_HIERARCHY(col);
+    uint32_t n = hier ? CHD_NUMBASES(hier) : 0;
+    uint32_t arr = hier ? CHD_BASEARRAY(hier) : 0;
+    const char* want = TD_NAME(target);
+
+    for (uint32_t i = 0; i < n && arr; i++) {
+        uint32_t bcd = MEM32(arr + i * 4);
+        if (!bcd) continue;
+        uint32_t td = BCD_TYPEDESC(bcd);
+        if (td != target && (!td || strcmp(TD_NAME(td), want))) continue;
+        /* Non-virtual base: mdisp is the whole adjustment. A virtual one adds
+         * the displacement found through pdisp/vdisp. */
+        uint32_t base = complete + BCD_MDISP(bcd);
+        if ((int32_t)BCD_PDISP(bcd) >= 0) {
+            uint32_t vbtbl = MEM32(complete + BCD_PDISP(bcd));
+            base = complete + BCD_PDISP(bcd)
+                 + (int32_t)MEM32(vbtbl + BCD_VDISP(bcd)) + BCD_MDISP(bcd);
+        }
+        RET(base); CDECLRET();
+        return;
+    }
+    RET(0); CDECLRET();          /* a failed dynamic_cast is legitimate */
+}
+
+static void crt_CxxThrowException(void) {
+    /*
+     * ponytail: report and stop. Honouring a throw means running the MSVC
+     * unwinder over the simulated stack and calling each frame's funclets,
+     * which is a project of its own; nothing in the startup path is supposed
+     * to throw, so a throw here is a finding, not a control path. Implement
+     * unwinding if the game turns out to use exceptions for flow.
+     */
+    uint32_t info = ARG(1);
+    const char* name = "(unknown)";
+    if (info) {
+        uint32_t cat = MEM32(info + 0x0C);            /* pCatchableTypeArray */
+        if (cat && MEM32(cat)) {
+            uint32_t ct = MEM32(cat + 4);             /* first CatchableType */
+            uint32_t td = ct ? MEM32(ct + 4) : 0;     /* its TypeDescriptor */
+            if (td) name = TD_NAME(td);
+        }
+    }
+    fprintf(stderr, "[cxx] throw %s from 0x%08X (no unwinder)\n", name, g_cur_func);
+    recomp_dump_trace("throw");
+    abort();
+}
+static void crt_frame_handler(void) {
+    fprintf(stderr, "[cxx] __CxxFrameHandler reached from 0x%08X\n", g_cur_func);
+    abort();
+}
+static void crt_except_handler3(void) {
+    fprintf(stderr, "[cxx] _except_handler3 reached from 0x%08X\n", g_cur_func);
+    abort();
+}
+
+/*
+ * bsearch(key, base, num, width, compare). The comparison function is lifted
+ * code, so each probe re-enters the machine. Returning 0 unconditionally -- the
+ * stub's behaviour -- makes every table lookup in the game miss.
+ */
+static void crt_bsearch(void) {
+    uint32_t key = ARG(0), base = ARG(1), num = ARG(2), width = ARG(3);
+    recomp_func_t cmp = recomp_lookup(ARG(4));
+    if (!cmp || !width) {
+        fprintf(stderr, "[crt] bsearch: comparator 0x%08X is not lifted\n", ARG(4));
+        RET(0); CDECLRET(); return;
+    }
+    uint32_t lo = 0, hi = num;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        uint32_t elem = base + mid * width;
+        PUSH32(g_esp, elem);
+        PUSH32(g_esp, key);
+        PUSH32(g_esp, RECOMP_RETADDR);
+        uint32_t save = g_cur_func;
+        cmp();
+        g_cur_func = save;
+        g_esp += 8;                       /* cdecl: the caller pops */
+        int32_t r = (int32_t)g_eax;
+        if (r == 0) { RET(elem); CDECLRET(); return; }
+        if (r < 0) hi = mid; else lo = mid + 1;
+    }
+    RET(0); CDECLRET();
+}
+
+static void crt_mktime(void) {
+    /* struct tm is nine ints in both ABIs. */
+    struct tm t;
+    if (!ARG(0)) { RET(0xFFFFFFFFu); CDECLRET(); return; }
+    uint32_t o = ARG(0);
+    t.tm_sec = (int)MEM32(o + 0);  t.tm_min  = (int)MEM32(o + 4);
+    t.tm_hour = (int)MEM32(o + 8); t.tm_mday = (int)MEM32(o + 12);
+    t.tm_mon = (int)MEM32(o + 16); t.tm_year = (int)MEM32(o + 20);
+    t.tm_wday = (int)MEM32(o + 24); t.tm_yday = (int)MEM32(o + 28);
+    t.tm_isdst = (int)MEM32(o + 32);
+    time_t r = mktime(&t);
+    MEM32(o + 24) = (uint32_t)t.tm_wday;
+    MEM32(o + 28) = (uint32_t)t.tm_yday;
+    RET((uint32_t)(int32_t)r); CDECLRET();
+}
+
+
+/* ------------------------------------------------- KERNEL32 sync and files
+
+ * Focom.ini's first directive is `CheckAppMutex FORCE`, so CreateMutexA is the
+ * very first thing the startup script asks for. A stub returning 0 reads as
+ * "could not create the mutex", and the game treats that the same as "another
+ * instance is already running".
+ */
+static void k32_CreateMutexA(void) {
+    const char* nm = ARG(2) ? (const char*)(uintptr_t)ADDR(ARG(2)) : NULL;
+    HANDLE h = CreateMutexA(NULL, (BOOL)ARG(1), nm);
+    RET(h ? h2i(h) : 0); STDRET(3);
+}
+static void k32_ReleaseMutex(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (ReleaseMutex(h) ? 1 : 0) : 0); STDRET(1);
+}
+static void k32_CreateEventA(void) {
+    const char* nm = ARG(3) ? (const char*)(uintptr_t)ADDR(ARG(3)) : NULL;
+    HANDLE h = CreateEventA(NULL, (BOOL)ARG(1), (BOOL)ARG(2), nm);
+    RET(h ? h2i(h) : 0); STDRET(4);
+}
+static void k32_SetEvent(void)   { HANDLE h = i2h(ARG(0)); RET(h ? (SetEvent(h) ? 1 : 0) : 0);   STDRET(1); }
+static void k32_ResetEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (ResetEvent(h) ? 1 : 0) : 0); STDRET(1); }
+static void k32_PulseEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (PulseEvent(h) ? 1 : 0) : 0); STDRET(1); }
+static void k32_WaitForSingleObject(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (uint32_t)WaitForSingleObject(h, ARG(1)) : 0xFFFFFFFFu); STDRET(2);
+}
+static void k32_CopyFileA(void) {
+    char a[MAX_PATH * 2], b[MAX_PATH * 2], p[MAX_PATH * 2];
+    const char* s = host_path(ARG(0), a, sizeof(a));
+    snprintf(p, sizeof(p), "%s", s ? s : "");
+    const char* dst = host_path(ARG(1), b, sizeof(b));
+    RET(s && dst ? (CopyFileA(p, dst, (BOOL)ARG(2)) ? 1 : 0) : 0); STDRET(3);
+}
+static void k32_MoveFileA(void) {
+    char a[MAX_PATH * 2], b[MAX_PATH * 2], p[MAX_PATH * 2];
+    const char* s = host_path(ARG(0), a, sizeof(a));
+    snprintf(p, sizeof(p), "%s", s ? s : "");
+    const char* dst = host_path(ARG(1), b, sizeof(b));
+    RET(s && dst ? (MoveFileA(p, dst) ? 1 : 0) : 0); STDRET(2);
+}
+static void k32_RemoveDirectoryA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    RET(hp ? (RemoveDirectoryA(hp) ? 1 : 0) : 0); STDRET(1);
+}
+static void k32_SetFileAttributesA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    RET(hp ? (SetFileAttributesA(hp, ARG(1)) ? 1 : 0) : 0); STDRET(2);
+}
+/* FILETIME and SYSTEMTIME have identical 32- and 64-bit layouts. */
+static void k32_FileTimeToLocalFileTime(void) {
+    FILETIME in, out;
+    if (!ARG(0) || !ARG(1)) { RET(0); STDRET(2); return; }
+    memcpy(&in, (void*)(uintptr_t)ADDR(ARG(0)), sizeof(in));
+    BOOL ok = FileTimeToLocalFileTime(&in, &out);
+    memcpy((void*)(uintptr_t)ADDR(ARG(1)), &out, sizeof(out));
+    RET(ok ? 1 : 0); STDRET(2);
+}
+static void k32_LocalFileTimeToFileTime(void) {
+    FILETIME in, out;
+    if (!ARG(0) || !ARG(1)) { RET(0); STDRET(2); return; }
+    memcpy(&in, (void*)(uintptr_t)ADDR(ARG(0)), sizeof(in));
+    BOOL ok = LocalFileTimeToFileTime(&in, &out);
+    memcpy((void*)(uintptr_t)ADDR(ARG(1)), &out, sizeof(out));
+    RET(ok ? 1 : 0); STDRET(2);
+}
+static void k32_FileTimeToSystemTime(void) {
+    FILETIME in; SYSTEMTIME out;
+    if (!ARG(0) || !ARG(1)) { RET(0); STDRET(2); return; }
+    memcpy(&in, (void*)(uintptr_t)ADDR(ARG(0)), sizeof(in));
+    BOOL ok = FileTimeToSystemTime(&in, &out);
+    memcpy((void*)(uintptr_t)ADDR(ARG(1)), &out, sizeof(out));
+    RET(ok ? 1 : 0); STDRET(2);
+}
+static void k32_SystemTimeToFileTime(void) {
+    SYSTEMTIME in; FILETIME out;
+    if (!ARG(0) || !ARG(1)) { RET(0); STDRET(2); return; }
+    memcpy(&in, (void*)(uintptr_t)ADDR(ARG(0)), sizeof(in));
+    BOOL ok = SystemTimeToFileTime(&in, &out);
+    memcpy((void*)(uintptr_t)ADDR(ARG(1)), &out, sizeof(out));
+    RET(ok ? 1 : 0); STDRET(2);
+}
+
+/* ------------------------------------------------------------- ADVAPI32
+
+ * The game keeps its settings in the registry, under
+ *
+ *   LucasArts Entertainment Company LLC\Force Commander\v1.0\Settings\Screen
+ *   ...\Settings\Game        (UseMipmapping, LODLevel, FogLevel, Brightness)
+ *
+ * and its own error string for the failure path is "Failed to create file
+ * system registry object!". With the whole Reg* family stubbed to return 0 and
+ * write nothing, every one of those reads came back as an uninitialised out
+ * parameter -- which is how a stack object's member at +0x14 ended up NULL and
+ * a virtual call went through it.
+ *
+ * These pass through to the real registry rather than to an invented store, so
+ * the game writes its own defaults on first run and there is nothing to guess.
+ * HKEY_LOCAL_MACHINE is redirected to HKEY_CURRENT_USER: the game was written
+ * for a single-user Windows 98 and writing under HKLM now needs elevation.
+ */
+static HKEY reg_key(uint32_t v) {
+    switch (v) {
+    case 0x80000000u: return HKEY_CLASSES_ROOT;
+    case 0x80000001u: return HKEY_CURRENT_USER;
+    case 0x80000002u: return HKEY_CURRENT_USER;   /* HKLM, redirected */
+    case 0x80000003u: return HKEY_USERS;
+    case 0x80000005u: return HKEY_CURRENT_CONFIG;
+    default: return (HKEY)i2h(v);
+    }
+}
+static const char* reg_str(uint32_t va) {
+    return va ? (const char*)(uintptr_t)ADDR(va) : NULL;
+}
+static void adv_RegOpenKeyExA(void) {
+    HKEY out = NULL;
+    LONG r = RegOpenKeyExA(reg_key(ARG(0)), reg_str(ARG(1)), ARG(2),
+                           ARG(3) | KEY_READ, &out);
+    if (r == ERROR_SUCCESS && ARG(4)) MEM32(ARG(4)) = h2i(out);
+    RET((uint32_t)r); STDRET(5);
+}
+static void adv_RegCreateKeyExA(void) {
+    HKEY out = NULL;
+    DWORD disp = 0;
+    LONG r = RegCreateKeyExA(reg_key(ARG(0)), reg_str(ARG(1)), 0, NULL, ARG(4),
+                             ARG(5) | KEY_READ | KEY_WRITE, NULL, &out, &disp);
+    if (g_shim_trace)
+        fprintf(stderr, "[reg] create %s -> %ld\n", reg_str(ARG(1)) ? reg_str(ARG(1)) : "(null)", r);
+    if (r == ERROR_SUCCESS && ARG(7)) MEM32(ARG(7)) = h2i(out);
+    if (ARG(8)) MEM32(ARG(8)) = (uint32_t)disp;
+    RET((uint32_t)r); STDRET(9);
+}
+static void adv_RegQueryValueExA(void) {
+    DWORD type = 0, cb = ARG(5) ? MEM32(ARG(5)) : 0;
+    BYTE* data = ARG(4) ? (BYTE*)(uintptr_t)ADDR(ARG(4)) : NULL;
+    LONG r = RegQueryValueExA(reg_key(ARG(0)), reg_str(ARG(1)), NULL,
+                              &type, data, ARG(5) ? &cb : NULL);
+    if (g_shim_trace)
+        fprintf(stderr, "[reg] query %s -> %ld\n", reg_str(ARG(1)) ? reg_str(ARG(1)) : "(null)", r);
+    if (ARG(3)) MEM32(ARG(3)) = (uint32_t)type;
+    if (ARG(5)) MEM32(ARG(5)) = (uint32_t)cb;
+    RET((uint32_t)r); STDRET(6);
+}
+static void adv_RegSetValueExA(void) {
+    const BYTE* data = ARG(4) ? (const BYTE*)(uintptr_t)ADDR(ARG(4)) : NULL;
+    LONG r = RegSetValueExA(reg_key(ARG(0)), reg_str(ARG(1)), 0, ARG(3),
+                            data, ARG(5));
+    RET((uint32_t)r); STDRET(6);
+}
+static void adv_RegCloseKey(void) {
+    HKEY k = reg_key(ARG(0));
+    /* Never close a predefined key: the handle is shared process-wide. */
+    RET((uint32_t)((ARG(0) & 0x80000000u) ? ERROR_SUCCESS
+                                          : (k ? RegCloseKey(k) : ERROR_SUCCESS)));
+    STDRET(1);
+}
+
+/* Small KERNEL32 leftovers the game touches on the settings path. */
+static void k32_GetCurrentThreadId(void)  { RET((uint32_t)GetCurrentThreadId()); STDRET(0); }
+static void k32_GetCurrentThread(void)    { RET(0xFFFFFFFEu); STDRET(0); }
+static void k32_lstrlenA(void)            { const char* p = reg_str(ARG(0));
+                                            RET(p ? (uint32_t)strlen(p) : 0); STDRET(1); }
+static void k32_LocalFree(void)           { (void)ARG(0); RET(0); STDRET(1); }
+static void k32_OutputDebugStringA(void)  { const char* p = reg_str(ARG(0));
+                                            if (p) fprintf(stderr, "[dbg] %s", p);
+                                            RET(0); STDRET(1); }
+static void k32_GetLocalTime(void) {
+    /* 8 WORDs: year, month, dow, day, hour, minute, second, ms. Same layout
+     * on both word sizes, so the host struct copies straight over. */
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    if (ARG(0)) memcpy((void*)(uintptr_t)ADDR(ARG(0)), &st, sizeof(st));
+    RET(0); STDRET(1);
+}
+static void k32_CreateDirectoryA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    RET(hp ? (CreateDirectoryA(hp, NULL) ? 1 : 0) : 0); STDRET(2);
+}
+static void k32_DeleteFileA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    RET(hp ? (DeleteFileA(hp) ? 1 : 0) : 0); STDRET(1);
+}
+static void k32_SetEndOfFile(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (SetEndOfFile(h) ? 1 : 0) : 0); STDRET(1);
+}
+static void k32_GlobalMemoryStatus(void) {
+    MEMORYSTATUS ms;
+    ms.dwLength = sizeof(ms);
+    GlobalMemoryStatus(&ms);
+    if (!ARG(0)) { RET(0); STDRET(1); return; }
+    /* MEMORYSTATUS is eight DWORDs in the 32-bit ABI; the host struct uses
+     * SIZE_T, which is 64-bit here, so it has to be copied field by field. */
+    uint32_t o = ARG(0);
+    MEM32(o + 0x00) = 32;
+    MEM32(o + 0x04) = ms.dwMemoryLoad;
+    MEM32(o + 0x08) = (uint32_t)(ms.dwTotalPhys      > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwTotalPhys);
+    MEM32(o + 0x0C) = (uint32_t)(ms.dwAvailPhys      > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwAvailPhys);
+    MEM32(o + 0x10) = (uint32_t)(ms.dwTotalPageFile  > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwTotalPageFile);
+    MEM32(o + 0x14) = (uint32_t)(ms.dwAvailPageFile  > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwAvailPageFile);
+    MEM32(o + 0x18) = (uint32_t)(ms.dwTotalVirtual   > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwTotalVirtual);
+    MEM32(o + 0x1C) = (uint32_t)(ms.dwAvailVirtual   > 0x7FFFFFFF ? 0x7FFFFFFF : ms.dwAvailVirtual);
+    RET(0); STDRET(1);
+}
+static void k32_GetSystemInfo(void) {
+    /* SYSTEM_INFO carries two pointers, so the 32-bit layout differs from the
+     * host's; only the fields the game can act on are filled. */
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    if (!ARG(0)) { RET(0); STDRET(1); return; }
+    uint32_t o = ARG(0);
+    memset((void*)(uintptr_t)ADDR(o), 0, 36);
+    MEM32(o + 0x00) = si.wProcessorArchitecture;
+    MEM32(o + 0x04) = si.dwPageSize;
+    MEM32(o + 0x08) = 0x00010000u;                 /* lpMinimumApplicationAddress */
+    MEM32(o + 0x0C) = 0x7FFEFFFFu;                 /* lpMaximumApplicationAddress */
+    MEM32(o + 0x10) = (uint32_t)si.dwActiveProcessorMask;
+    MEM32(o + 0x14) = si.dwNumberOfProcessors;
+    MEM32(o + 0x18) = si.dwProcessorType;
+    MEM32(o + 0x1C) = si.dwAllocationGranularity;
+    MEM32(o + 0x20) = (uint32_t)si.wProcessorLevel | ((uint32_t)si.wProcessorRevision << 16);
+    RET(0); STDRET(1);
+}
+
+/* --------------------------------------------------- KERNEL32 file access
+
+ * The game reaches these right after startup, scanning for its own data:
+ * FindFirstFileA over the install directory, then CreateFileA/ReadFile on what
+ * it finds. forcecommand.rpk is 274 MB and every model, texture, animation and
+ * mission lives inside it, so nothing appears on screen until these work.
+ *
+ * All of them go through host_path(), so a relative name resolves under
+ * g_gamedir exactly the way fopen does, and through the h2i/i2h table, because
+ * a host HANDLE is 64 bits and the lifted code holds 32.
+ */
+static void k32_CreateFileA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    HANDLE h = hp ? CreateFileA(hp, ARG(1), ARG(2), NULL, ARG(4), ARG(5), NULL)
+                  : INVALID_HANDLE_VALUE;
+    if (h == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "[k32] CreateFileA(\"%s\") failed (%lu)\n",
+                hp ? hp : "(null)", GetLastError());
+        RET(0xFFFFFFFFu); STDRET(7); return;
+    }
+    RET(h2i(h)); STDRET(7);
+}
+static void k32_ReadFile(void) {
+    DWORD got = 0;
+    HANDLE h = i2h(ARG(0));
+    BOOL ok = h && ReadFile(h, ARGP(1, char), ARG(2), &got, NULL);
+    if (g_shim_trace)
+        fprintf(stderr, "[k32] ReadFile(h=%u->%p, %u) -> %d got=%lu\n", ARG(0), (void*)h, ARG(2), ok, got);
+    if (ARG(3)) MEM32(ARG(3)) = (uint32_t)got;
+    RET(ok ? 1 : 0); STDRET(5);
+}
+static void k32_WriteFile(void) {
+    DWORD put = 0;
+    HANDLE h = i2h(ARG(0));
+    BOOL ok = h && WriteFile(h, ARGP(1, char), ARG(2), &put, NULL);
+    if (ARG(3)) MEM32(ARG(3)) = (uint32_t)put;
+    RET(ok ? 1 : 0); STDRET(5);
+}
+static void k32_CloseHandle(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (CloseHandle(h) ? 1 : 0) : 0); STDRET(1);
+}
+static void k32_SetFilePointer(void) {
+    /* The high dword is IN/OUT and its pointer may be NULL. A failed seek has
+     * to come back as 0xFFFFFFFF, not 0, or the game reads it as "now at the
+     * start of the file" and carries on against the wrong offset. */
+    HANDLE h = i2h(ARG(0));
+    LONG hi = ARG(2) ? (LONG)MEM32(ARG(2)) : 0;
+    DWORD lo = h ? SetFilePointer(h, (LONG)ARG(1), ARG(2) ? &hi : NULL, ARG(3))
+                 : INVALID_SET_FILE_POINTER;
+    if (ARG(2)) MEM32(ARG(2)) = (uint32_t)hi;
+    RET((uint32_t)lo); STDRET(4);
+}
+static void k32_GetFileSize(void) {
+    DWORD hi = 0;
+    HANDLE h = i2h(ARG(0));
+    DWORD lo = h ? GetFileSize(h, &hi) : INVALID_FILE_SIZE;
+    if (ARG(1)) MEM32(ARG(1)) = (uint32_t)hi;
+    RET((uint32_t)lo); STDRET(2);
+}
+static void k32_GetFileAttributesA(void) {
+    char p[MAX_PATH * 2];
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    RET(hp ? (uint32_t)GetFileAttributesA(hp) : 0xFFFFFFFFu); STDRET(1);
+}
+/*
+ * WIN32_FIND_DATAA has no pointer members, so its 32- and 64-bit layouts are
+ * identical (320 bytes) and the host struct copies straight into target memory.
+ * That is the only reason this is a memcpy rather than the field-by-field
+ * marshal PAINTSTRUCT needs.
+ */
+static void find_data_out(uint32_t va, const WIN32_FIND_DATAA* fd) {
+    if (va) memcpy((void*)(uintptr_t)ADDR(va), fd, sizeof(*fd));
+}
+static void k32_FindFirstFileA(void) {
+    char p[MAX_PATH * 2];
+    /* Zeroed, because the whole 320 bytes get copied into target memory and
+     * Windows only guarantees the fields it fills. Left uninitialised, the tail
+     * of cFileName carried host stack contents across -- including 64-bit host
+     * pointers, whose high half then read back as a _Ptr of 0x00007FF7 when the
+     * game reused that stack region for a string. Nothing from the host address
+     * space may ever be visible to the target. */
+    WIN32_FIND_DATAA fd;
+    memset(&fd, 0, sizeof(fd));
+    const char* hp = host_path(ARG(0), p, sizeof(p));
+    HANDLE h = hp ? FindFirstFileA(hp, &fd) : INVALID_HANDLE_VALUE;
+    if (g_shim_trace)
+        fprintf(stderr, "[k32] FindFirstFileA(\"%s\") -> %s\n", hp ? hp : "(null)",
+            h == INVALID_HANDLE_VALUE ? "not found" : fd.cFileName);
+    if (h == INVALID_HANDLE_VALUE) { RET(0xFFFFFFFFu); STDRET(2); return; }
+    find_data_out(ARG(1), &fd);
+    RET(h2i(h)); STDRET(2);
+}
+static void k32_FindNextFileA(void) {
+    WIN32_FIND_DATAA fd;
+    memset(&fd, 0, sizeof(fd));
+    HANDLE h = i2h(ARG(0));
+    if (!h || !FindNextFileA(h, &fd)) { RET(0); STDRET(2); return; }
+    find_data_out(ARG(1), &fd);
+    RET(1); STDRET(2);
+}
+static void k32_FindClose(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (FindClose(h) ? 1 : 0) : 0); STDRET(1);
+}
+
+/*
+ * sscanf, one conversion at a time -- the same shape as crt_format does for
+ * printf. Build a single-conversion format with a trailing %n, run the host
+ * sscanf on the remaining input, and store the result at the width the
+ * conversion implies. The alternative is reimplementing scanf parsing, and a
+ * bug in that would present as a bug in the game's own data files.
+ */
+static void crt_sscanf(void) {
+    const char* in = ARGP(0, char);
+    const char* fmt = ARGP(1, char);
+    uint32_t argva = g_esp + 4 + 2 * 4;
+    size_t pos = 0;
+    int filled = 0;
+    /*
+     * sscanf returns EOF, not 0, when the input runs out before the first
+     * conversion -- and that is the difference between "this line held no
+     * token" and "the file is finished". The game's config reader loops on it,
+     * so returning 0 at end of input made the loop take the found-a-token
+     * branch with a NULL string and fault on the virtual call through it.
+     */
+    int eof = 0;
+
+    for (const char* p = fmt; *p; ) {
+        if (isspace((unsigned char)*p)) {
+            while (isspace((unsigned char)in[pos])) pos++;
+            while (isspace((unsigned char)*p)) p++;
+            continue;
+        }
+        if (*p != '%') {                        /* literal: it has to match */
+            if (in[pos] != *p) break;
+            pos++; p++;
+            continue;
+        }
+        if (p[1] == '%') {
+            if (in[pos] != '%') break;
+            pos++; p += 2;
+            continue;
+        }
+
+        const char* start = p++;
+        int suppress = 0;
+        if (*p == '*') { suppress = 1; p++; }
+        while (isdigit((unsigned char)*p)) p++;
+        int lng = 0;
+        while (*p == 'l' || *p == 'h' || *p == 'L') { if (*p == 'l') lng = 1; p++; }
+        char conv = *p++;
+
+        /*
+         * %n is not a conversion: it stores how much input has been consumed
+         * so far and does not count towards the return value. The game's config
+         * reader uses "%4095s %n" and advances its cursor by what %n reports,
+         * so leaving that pointer unwritten hands it a garbage offset -- which
+         * is how a NULL string reached a virtual call.
+         */
+        if (conv == 'n') {
+            if (!suppress) {
+                uint32_t dst = MEM32(argva);
+                argva += 4;
+                if (dst) MEM32(dst) = (uint32_t)pos;
+            }
+            continue;
+        }
+
+        char spec[32];
+        size_t len = (size_t)(p - start);
+        if (len >= sizeof(spec) - 3) break;
+        memcpy(spec, start, len);
+        strcpy(spec + len, "%n");
+
+        int used = -1, n;
+        /* Big enough for the widest conversion the game asks for: its config
+         * reader uses "%4095s", and a 512-byte scratch buffer was a stack
+         * smash that surfaced as a fault inside a system DLL. */
+        static union { long i; double d; float f; char s[8192]; } v;
+        if (conv == 'f' || conv == 'e' || conv == 'E' || conv == 'g' || conv == 'G')
+            n = lng ? sscanf(in + pos, spec, &v.d, &used)
+                    : sscanf(in + pos, spec, &v.f, &used);
+        else if (conv == 's' || conv == 'c' || conv == '[')
+            n = sscanf(in + pos, spec, v.s, &used);
+        else
+            n = sscanf(in + pos, spec, &v.i, &used);
+        if (n == EOF) eof = 1;
+        if (n < 1 && used < 0) break;
+        if (used > 0) pos += (size_t)used;
+        if (suppress) continue;
+        if (n < 1) break;
+
+        uint32_t dst = MEM32(argva);
+        argva += 4;
+        if (!dst) break;
+        char* hd = (char*)(uintptr_t)ADDR(dst);
+        switch (conv) {
+        case 'f': case 'e': case 'E': case 'g': case 'G':
+            if (lng) memcpy(hd, &v.d, 8); else memcpy(hd, &v.f, 4);
+            break;
+        case 's': case '[': strcpy(hd, v.s); break;
+        case 'c': *hd = v.s[0]; break;
+        default: {
+            uint32_t u = (uint32_t)v.i;
+            memcpy(hd, &u, 4);
+            break;
+        }
+        }
+        filled++;
+    }
+    if (g_shim_trace)
+        fprintf(stderr, "[crt] sscanf(%.60s | %s) -> %d eof=%d\n", in, fmt, filled, eof);
+    RET(filled ? (uint32_t)filled : (eof ? 0xFFFFFFFFu : 0));
+    CDECLRET();
+}
+
 /* ------------------------------------------------------- KERNEL32 basics */
 
 static void k32_GetModuleHandleA(void) { RET(0x00400000u); STDRET(1); }
+/*
+ * GetVolumeInformationA. The game's CheckCD compares the volume label against
+ * the disc's, and disc 1 is labelled FOCOM_1 (from the ISO primary volume
+ * descriptor), so that is what a shim has to report or the game asks for the CD
+ * forever. Six of the eight parameters are OUT and each one is only written
+ * when its pointer is non-NULL.
+ */
+static void k32_GetVolumeInformationA(void) {
+    if (ARG(1) && ARG(2)) snprintf((char*)(uintptr_t)ADDR(ARG(1)), ARG(2), "FOCOM_1");
+    if (ARG(3)) MEM32(ARG(3)) = 0x1A2B3C4Du;          /* any stable serial */
+    if (ARG(4)) MEM32(ARG(4)) = 255;
+    if (ARG(5)) MEM32(ARG(5)) = 0x00000004u;          /* FILE_READ_ONLY_VOLUME */
+    if (ARG(6) && ARG(7)) snprintf((char*)(uintptr_t)ADDR(ARG(6)), ARG(7), "CDFS");
+    RET(1); STDRET(8);
+}
 static void k32_GetTickCount(void)     { RET((uint32_t)GetTickCount()); STDRET(0); }
 static void k32_GetLastError(void)     { RET((uint32_t)GetLastError()); STDRET(0); }
 static void k32_Sleep(void)            { Sleep(ARG(0)); RET(0); STDRET(1); }
+/*
+ * Both of these must return an ABSOLUTE path. The game feeds what they return
+ * straight back into _fullpath, so a relative "game" got resolved against
+ * g_gamedir a second time and it went looking for game\game\Focom.ini --
+ * every path it derived was one directory too deep, and it gave up with
+ * exit(0) before opening anything.
+ */
+static const char* gamedir_abs(char* buf, size_t n) {
+    static char abs[MAX_PATH];
+    if (!abs[0] && !_fullpath(abs, g_gamedir, sizeof(abs)))
+        snprintf(abs, sizeof(abs), "%s", g_gamedir);
+    snprintf(buf, n, "%s", abs);
+    return buf;
+}
 static void k32_GetModuleFileNameA(void) {
-    char p[MAX_PATH];
-    snprintf(p, sizeof(p), "%s/Focom.exe", g_gamedir);
-    strncpy(ARGP(1,char), p, ARG(2));
+    char d[MAX_PATH], p[MAX_PATH * 2];
+    snprintf(p, sizeof(p), "%s\\Focom.exe", gamedir_abs(d, sizeof(d)));
+    snprintf(ARGP(1,char), ARG(2), "%s", p);
     RET((uint32_t)strlen(p)); STDRET(3);
 }
 static void k32_GetCurrentDirectoryA(void) {
-    strncpy(ARGP(1,char), g_gamedir, ARG(0));
-    RET((uint32_t)strlen(g_gamedir)); STDRET(2);
+    char d[MAX_PATH];
+    gamedir_abs(d, sizeof(d));
+    snprintf(ARGP(1,char), ARG(0), "%s", d);
+    RET((uint32_t)strlen(d)); STDRET(2);
 }
 
 
@@ -573,6 +1318,8 @@ const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
     { "MSVCRT.dll!fprintf",     crt_fprintf },
     { "MSVCRT.dll!fopen",       crt_fopen },
     { "MSVCRT.dll!fclose",      crt_fclose },
+    { "MSVCRT.dll!_fullpath",   crt_fullpath },
+    { "MSVCRT.dll!_splitpath",  crt_splitpath },
     { "MSVCRT.dll!fread",       crt_fread },
     { "MSVCRT.dll!fwrite",      crt_fwrite },
     { "MSVCRT.dll!fseek",       crt_fseek },
@@ -598,6 +1345,71 @@ const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
     { "MSVCRT.dll!ceil",        crt_ceil },
     { "MSVCRT.dll!_ftol",       crt_ftol },
     { "KERNEL32.dll!GetModuleHandleA",     k32_GetModuleHandleA },
+    { "KERNEL32.dll!GetVolumeInformationA", k32_GetVolumeInformationA },
+    { "KERNEL32.dll!CreateFileA",          k32_CreateFileA },
+    { "KERNEL32.dll!ReadFile",             k32_ReadFile },
+    { "KERNEL32.dll!WriteFile",            k32_WriteFile },
+    { "KERNEL32.dll!CloseHandle",          k32_CloseHandle },
+    { "KERNEL32.dll!SetFilePointer",       k32_SetFilePointer },
+    { "KERNEL32.dll!GetFileSize",          k32_GetFileSize },
+    { "KERNEL32.dll!GetFileAttributesA",   k32_GetFileAttributesA },
+    { "KERNEL32.dll!FindFirstFileA",       k32_FindFirstFileA },
+    { "KERNEL32.dll!FindNextFileA",        k32_FindNextFileA },
+    { "KERNEL32.dll!FindClose",            k32_FindClose },
+    { "MSVCRT.dll!sscanf",                 crt_sscanf },
+    { "ADVAPI32.dll!RegOpenKeyExA",        adv_RegOpenKeyExA },
+    { "ADVAPI32.dll!RegCreateKeyExA",      adv_RegCreateKeyExA },
+    { "ADVAPI32.dll!RegQueryValueExA",     adv_RegQueryValueExA },
+    { "ADVAPI32.dll!RegSetValueExA",       adv_RegSetValueExA },
+    { "ADVAPI32.dll!RegCloseKey",          adv_RegCloseKey },
+    { "USER32.dll!MessageBoxA",            u32_MessageBoxA },
+    { "USER32.dll!GetSystemMetrics",       u32_GetSystemMetrics },
+    { "USER32.dll!GetDesktopWindow",       u32_GetDesktopWindow },
+    { "USER32.dll!CharNextA",              u32_CharNextA },
+    { "USER32.dll!CharPrevA",              u32_CharPrevA },
+    { "USER32.dll!ShowCursor",             u32_ShowCursor },
+    { "USER32.dll!LoadCursorA",            u32_LoadCursorA },
+    { "USER32.dll!SetCursor",              u32_SetCursor },
+    { "USER32.dll!GetKeyState",            u32_GetKeyState },
+    { "GDI32.dll!GetStockObject",          u32_GetStockObject },
+    { "KERNEL32.dll!CreateMutexA",           k32_CreateMutexA },
+    { "KERNEL32.dll!ReleaseMutex",           k32_ReleaseMutex },
+    { "KERNEL32.dll!CreateEventA",           k32_CreateEventA },
+    { "KERNEL32.dll!SetEvent",               k32_SetEvent },
+    { "KERNEL32.dll!ResetEvent",             k32_ResetEvent },
+    { "KERNEL32.dll!PulseEvent",             k32_PulseEvent },
+    { "KERNEL32.dll!WaitForSingleObject",    k32_WaitForSingleObject },
+    { "KERNEL32.dll!CopyFileA",              k32_CopyFileA },
+    { "KERNEL32.dll!MoveFileA",              k32_MoveFileA },
+    { "KERNEL32.dll!RemoveDirectoryA",       k32_RemoveDirectoryA },
+    { "KERNEL32.dll!SetFileAttributesA",     k32_SetFileAttributesA },
+    { "KERNEL32.dll!FileTimeToLocalFileTime",  k32_FileTimeToLocalFileTime },
+    { "KERNEL32.dll!LocalFileTimeToFileTime",  k32_LocalFileTimeToFileTime },
+    { "KERNEL32.dll!FileTimeToSystemTime",   k32_FileTimeToSystemTime },
+    { "KERNEL32.dll!SystemTimeToFileTime",   k32_SystemTimeToFileTime },
+    { "MSVCRT.dll!_purecall",                    crt_purecall },
+    { "MSVCRT.dll!_callnewh",                    crt_callnewh },
+    { "MSVCRT.dll!?terminate@@YAXXZ",            crt_terminate },
+    { "MSVCRT.dll!??1type_info@@UAE@XZ",         crt_typeinfo_dtor },
+    { "MSVCRT.dll!??8type_info@@QBEHABV0@@Z",    crt_typeinfo_eq },
+    { "MSVCRT.dll!__RTtypeid",                   crt_RTtypeid },
+    { "MSVCRT.dll!__RTDynamicCast",              crt_RTDynamicCast },
+    { "MSVCRT.dll!_CxxThrowException",           crt_CxxThrowException },
+    { "MSVCRT.dll!__CxxFrameHandler",            crt_frame_handler },
+    { "MSVCRT.dll!_except_handler3",             crt_except_handler3 },
+    { "MSVCRT.dll!bsearch",                      crt_bsearch },
+    { "MSVCRT.dll!mktime",                       crt_mktime },
+    { "KERNEL32.dll!GetCurrentThreadId",   k32_GetCurrentThreadId },
+    { "KERNEL32.dll!GetCurrentThread",     k32_GetCurrentThread },
+    { "KERNEL32.dll!lstrlenA",             k32_lstrlenA },
+    { "KERNEL32.dll!LocalFree",            k32_LocalFree },
+    { "KERNEL32.dll!OutputDebugStringA",   k32_OutputDebugStringA },
+    { "KERNEL32.dll!GetLocalTime",         k32_GetLocalTime },
+    { "KERNEL32.dll!CreateDirectoryA",     k32_CreateDirectoryA },
+    { "KERNEL32.dll!DeleteFileA",          k32_DeleteFileA },
+    { "KERNEL32.dll!SetEndOfFile",         k32_SetEndOfFile },
+    { "KERNEL32.dll!GlobalMemoryStatus",   k32_GlobalMemoryStatus },
+    { "KERNEL32.dll!GetSystemInfo",        k32_GetSystemInfo },
     { "KERNEL32.dll!GetModuleFileNameA",   k32_GetModuleFileNameA },
     { "KERNEL32.dll!GetCurrentDirectoryA", k32_GetCurrentDirectoryA },
     { "KERNEL32.dll!GetTickCount",         k32_GetTickCount },

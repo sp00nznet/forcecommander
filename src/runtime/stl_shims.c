@@ -74,6 +74,60 @@ static uint32_t g_nullstr;               /* the shared empty buffer */
 
 static char* host(uint32_t va) { return (char*)(uintptr_t)ADDR(va); }
 
+/* A usable destination. _Ptr == 0 is fine -- the game zero-fills string members
+ * and s_reserve() allocates on first write -- but a small NON-zero _Ptr, or a
+ * length no allocation could have, means this object was never a string: either
+ * `this` arrived through a wrong purge count or the storage was never built.
+ * Left unchecked that became a memcpy inside msvcrt.dll with nothing to say
+ * which shim or which caller was responsible. */
+/* A _Ptr always points at a buf_new() allocation or at g_nullstr, so it lies in
+ * the simulated stack (0x00200000..0x00300000) or heap (0x10000000 + 128 MB).
+ * The upper bound matters as much as the lower one: the first version of this
+ * only rejected small values and let a _Ptr of 0x9C464C95 straight through. */
+#define S_LOW  0x00200000u
+#define S_HIGH 0x18000000u
+#define S_MAXLEN 0x08000000u
+
+static int s_ptr_ok(uint32_t p) { return p >= S_LOW && p < S_HIGH; }
+
+static int s_bad(uint32_t o) {
+    if (o < S_LOW || o >= S_HIGH) return 1;
+    uint32_t p = S_PTR(o);
+    return (p && !s_ptr_ok(p)) || S_LEN(o) > S_MAXLEN;
+}
+
+
+/*
+ * Read the data pointer of ANOTHER string object, checked.
+ *
+ * Every shim that copies out of a second string went straight through
+ * s_src(x, NULL), so an object that was never constructed -- or one reached
+ * through a wrong purge count -- turned into a memcpy from whatever those four
+ * bytes happened to hold. That surfaced as a fault inside msvcrt.dll with no
+ * indication of which shim or which string was at fault. Reporting it names the
+ * call site instead, and treating the string as empty lets the run continue to
+ * the next real problem.
+ *
+ * The valid range is the simulated stack and heap: a _Ptr always points at a
+ * buf_new() allocation or at g_nullstr, never into the image.
+ */
+static const char* s_src(uint32_t o, uint32_t* len) {
+    if (s_bad(o)) {
+        fprintf(stderr, "[stl] read of a non-string 0x%08X (_Ptr=0x%08X)"
+                        " from 0x%08X\n",
+                o, o >= S_LOW ? S_PTR(o) : 0, g_cur_func);
+        static int seen = 0;
+        if (seen++ == 0) recomp_dump_trace("non-string read");
+        if (seen > 20) { if (len) *len = 0; return ""; }
+        if (len) *len = 0;
+        return "";
+    }
+    uint32_t p = S_PTR(o);
+    if (len) *len = p ? S_LEN(o) : 0;
+    return p ? host(p) : "";
+}
+
+
 /* Allocate a buffer for `cap` characters: one refcount byte, the data, a NUL. */
 static int g_trace_stl = 0;
 
@@ -103,13 +157,21 @@ static void s_set(uint32_t o, const char* src, uint32_t n, uint32_t cap) {
 
 /* Make room for `need` characters, preserving the current contents. */
 static void s_reserve(uint32_t o, uint32_t need) {
+    /* The single path every growing write takes, so the check belongs here
+     * rather than in each of the twenty-odd callers. */
+    if (s_bad(o)) {
+        fprintf(stderr, "[stl] reserve(%u) on a non-string 0x%08X"
+                        " (_Ptr=0x%08X) from 0x%08X\n",
+                need, o, o >= S_LOW && o < S_HIGH ? S_PTR(o) : 0, g_cur_func);
+        return;
+    }
     if (S_RES(o) >= need && S_PTR(o) != g_nullstr) return;
     uint32_t cap = S_RES(o) ? S_RES(o) : 15;
     while (cap < need) cap = cap * 2 + 1;
     uint32_t len = S_LEN(o);
     uint32_t data = buf_new(cap);
     if (!data) return;
-    if (len) memcpy(host(data), host(S_PTR(o)), len);
+    if (len) memcpy(host(data), s_src(o, NULL), len);
     MEM8(data + len) = 0;
     S_PTR(o) = data;
     S_RES(o) = cap;
@@ -121,21 +183,32 @@ static void s_empty(uint32_t o) {
     S_RES(o) = 0;
 }
 
+static int s_dst_ok(uint32_t o, const char* who) {
+    if (!s_bad(o)) return 1;
+    fprintf(stderr, "[stl] %s on a non-string this=0x%08X (_Ptr=0x%08X"
+                    " _Len=%u) from 0x%08X\n",
+            who, o, o >= S_LOW ? S_PTR(o) : 0, o >= S_LOW ? S_LEN(o) : 0,
+            g_cur_func);
+    return 0;
+}
+
 static void s_assign(uint32_t o, const char* src, uint32_t n) {
+    if (!s_dst_ok(o, "assign")) return;
     if (!n) { s_empty(o); return; }
     s_reserve(o, n);
     if (S_PTR(o) == g_nullstr) return;
-    memcpy(host(S_PTR(o)), src, n);
+    memcpy(s_src(o, NULL), src, n);
     MEM8(S_PTR(o) + n) = 0;
     S_LEN(o) = n;
 }
 
 static void s_append(uint32_t o, const char* src, uint32_t n) {
     if (!n) return;
+    if (!s_dst_ok(o, "append")) return;
     uint32_t len = S_LEN(o);
     s_reserve(o, len + n);
     if (S_PTR(o) == g_nullstr) return;
-    memcpy(host(S_PTR(o)) + len, src, n);
+    memcpy(s_src(o, NULL) + len, src, n);
     MEM8(S_PTR(o) + len + n) = 0;
     S_LEN(o) = len + n;
 }
@@ -159,7 +232,7 @@ static void s_ctor_cstr(void) {
 /* basic_string(const basic_string&) */
 static void s_ctor_copy(void) {
     uint32_t rhs = ARG(0);
-    s_set(THIS, rhs ? host(S_PTR(rhs)) : "", rhs ? S_LEN(rhs) : 0, 0);
+    s_set(THIS, rhs ? s_src(rhs, NULL) : "", rhs ? S_LEN(rhs) : 0, 0);
     RET(THIS); STDRET(1);
 }
 
@@ -189,7 +262,7 @@ static void s_assign_str_sub(void) {
     uint32_t rl = rhs ? S_LEN(rhs) : 0;
     if (pos > rl) pos = rl;
     if (n > rl - pos) n = rl - pos;
-    s_assign(THIS, host(S_PTR(rhs)) + pos, n);
+    s_assign(THIS, s_src(rhs, NULL) + pos, n);
     RET(THIS); STDRET(3);
 }
 
@@ -197,7 +270,7 @@ static void s_assign_str_sub(void) {
 
 static void s_op_append_str(void) {
     uint32_t rhs = ARG(0);
-    s_append(THIS, rhs ? host(S_PTR(rhs)) : "", rhs ? S_LEN(rhs) : 0);
+    s_append(THIS, rhs ? s_src(rhs, NULL) : "", rhs ? S_LEN(rhs) : 0);
     RET(THIS); STDRET(1);
 }
 static void s_op_append_cstr(void) {
@@ -210,7 +283,7 @@ static void s_append_str_sub(void) {
     uint32_t rl = rhs ? S_LEN(rhs) : 0;
     if (pos > rl) pos = rl;
     if (n > rl - pos) n = rl - pos;
-    s_append(THIS, host(S_PTR(rhs)) + pos, n);
+    s_append(THIS, s_src(rhs, NULL) + pos, n);
     RET(THIS); STDRET(3);
 }
 static void s_append_n_ch(void) {
@@ -219,7 +292,7 @@ static void s_append_n_ch(void) {
     uint32_t len = S_LEN(THIS);
     s_reserve(THIS, len + n);
     if (S_PTR(THIS) != g_nullstr) {
-        memset(host(S_PTR(THIS)) + len, c, n);
+        memset(s_src(THIS, NULL) + len, c, n);
         MEM8(S_PTR(THIS) + len + n) = 0;
         S_LEN(THIS) = len + n;
     }
@@ -243,7 +316,7 @@ static void s_max_size(void) { RET(0x7FFFFFFEu); STDRET(0); }
 static uint32_t find_fwd(uint32_t o, const char* pat, uint32_t pos, uint32_t n,
                          int want_in_set, int use_set) {
     uint32_t len = S_LEN(o);
-    const char* s = host(S_PTR(o));
+    const char* s = s_src(o, NULL);
     if (!use_set) {
         if (n > len || pos > len - n) return NPOS;
         for (uint32_t i = pos; i + n <= len; i++)
@@ -261,7 +334,7 @@ static uint32_t find_rev(uint32_t o, const char* pat, uint32_t pos, uint32_t n,
                          int want_in_set) {
     uint32_t len = S_LEN(o);
     if (!len) return NPOS;
-    const char* s = host(S_PTR(o));
+    const char* s = s_src(o, NULL);
     uint32_t i = (pos >= len) ? len - 1 : pos;
     for (;;) {
         int in = memchr(pat, s[i], n) != NULL;
@@ -293,7 +366,7 @@ static void s_copy_out(void) {     /* copy(char* dst, size_t n, size_t pos) */
     uint32_t dst = ARG(0), n = ARG(1), pos = ARG(2), len = S_LEN(THIS);
     if (pos > len) pos = len;
     if (n > len - pos) n = len - pos;
-    if (n) memcpy(host(dst), host(S_PTR(THIS)) + pos, n);
+    if (n) memcpy(host(dst), s_src(THIS, NULL) + pos, n);
     RET(n); STDRET(3);
 }
 
@@ -303,7 +376,7 @@ static void s_erase(void) {        /* erase(size_t pos, size_t n) */
     uint32_t pos = ARG(0), n = ARG(1), len = S_LEN(THIS);
     if (pos > len) pos = len;
     if (n > len - pos) n = len - pos;
-    char* s = host(S_PTR(THIS));
+    char* s = s_src(THIS, NULL);
     memmove(s + pos, s + pos + n, len - pos - n);
     S_LEN(THIS) = len - n;
     MEM8(S_PTR(THIS) + S_LEN(THIS)) = 0;
@@ -315,7 +388,7 @@ static void s_resize(void) {       /* resize(size_t n) -- pads with '\0' */
     if (n > len) {
         s_reserve(THIS, n);
         if (S_PTR(THIS) != g_nullstr)
-            memset(host(S_PTR(THIS)) + len, 0, n - len);
+            memset(s_src(THIS, NULL) + len, 0, n - len);
     }
     if (S_PTR(THIS) != g_nullstr) {
         S_LEN(THIS) = n;
@@ -336,9 +409,9 @@ static void s_replace(void) {  /* replace(pos,n, const string&, pos2,n2) */
     uint32_t tmp = buf_new(out);
     if (!tmp) { RET(THIS); STDRET(5); return; }
     char* d = host(tmp);
-    memcpy(d, host(S_PTR(THIS)), pos);
-    if (n2) memcpy(d + pos, host(S_PTR(rhs)) + pos2, n2);
-    memcpy(d + pos + n2, host(S_PTR(THIS)) + pos + n, len - pos - n);
+    memcpy(d, s_src(THIS, NULL), pos);
+    if (n2) memcpy(d + pos, s_src(rhs, NULL) + pos2, n2);
+    memcpy(d + pos + n2, s_src(THIS, NULL) + pos + n, len - pos - n);
     d[out] = 0;
     S_PTR(THIS) = tmp; S_LEN(THIS) = out; S_RES(THIS) = out;
     RET(THIS); STDRET(5);
@@ -354,7 +427,7 @@ static void s_substr(void) {
     uint32_t out = ARG(0), pos = ARG(1), n = ARG(2), len = S_LEN(THIS);
     if (pos > len) pos = len;
     if (n > len - pos) n = len - pos;
-    s_set(out, host(S_PTR(THIS)) + pos, n, 0);
+    s_set(out, s_src(THIS, NULL) + pos, n, 0);
     RET(out); STDRET(3);
 }
 
@@ -392,12 +465,12 @@ static void s_Grow(void) {
 static int cmp_str_str(uint32_t a, uint32_t b) {
     uint32_t la = S_LEN(a), lb = S_LEN(b);
     uint32_t n = la < lb ? la : lb;
-    int r = n ? memcmp(host(S_PTR(a)), host(S_PTR(b)), n) : 0;
+    int r = n ? memcmp(s_src(a, NULL), s_src(b, NULL), n) : 0;
     if (r) return r;
     return la == lb ? 0 : (la < lb ? -1 : 1);
 }
 static int cmp_str_cstr(uint32_t a, uint32_t b) {
-    return strcmp(host(S_PTR(a)), b ? host(b) : "");
+    return strcmp(s_src(a, NULL), b ? host(b) : "");
 }
 
 static void f_eq_ss(void)  { RET(cmp_str_str(ARG(0), ARG(1)) == 0); CDECLRET(); }
@@ -411,14 +484,16 @@ static void f_gt_ss(void)  { RET(cmp_str_str(ARG(0), ARG(1)) > 0); CDECLRET(); }
 /* operator+ returns by value: hidden out pointer is the first argument. */
 static void f_add_ss(void) {
     uint32_t o = ARG(0), a = ARG(1), b = ARG(2);
-    s_set(o, host(S_PTR(a)), S_LEN(a), S_LEN(a) + S_LEN(b));
-    s_append(o, host(S_PTR(b)), S_LEN(b));
+    s_set(o, s_src(a, NULL), S_LEN(a), S_LEN(a) + S_LEN(b));
+    uint32_t bl; const char* bp = s_src(b, &bl);
+    s_append(o, bp, bl);
     RET(o); CDECLRET();
 }
 static void f_add_sc(void) {
     uint32_t o = ARG(0), a = ARG(1);
     const char* b = ARG(2) ? host(ARG(2)) : "";
-    s_set(o, host(S_PTR(a)), S_LEN(a), 0);
+    uint32_t al; const char* ap = s_src(a, &al);
+    s_set(o, ap, al, 0);
     s_append(o, b, (uint32_t)strlen(b));
     RET(o); CDECLRET();
 }
@@ -427,13 +502,14 @@ static void f_add_cs(void) {
     const char* a = ARG(1) ? host(ARG(1)) : "";
     uint32_t b = ARG(2);
     s_set(o, a, (uint32_t)strlen(a), 0);
-    s_append(o, host(S_PTR(b)), S_LEN(b));
+    uint32_t bl; const char* bp = s_src(b, &bl);
+    s_append(o, bp, bl);
     RET(o); CDECLRET();
 }
 static void f_add_s_ch(void) {
     uint32_t o = ARG(0), a = ARG(1);
     char c = (char)ARG(2);
-    s_set(o, host(S_PTR(a)), S_LEN(a), S_LEN(a) + 1);
+    s_set(o, s_src(a, NULL), S_LEN(a), S_LEN(a) + 1);
     s_append(o, &c, 1);
     RET(o); CDECLRET();
 }
