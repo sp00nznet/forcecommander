@@ -422,6 +422,34 @@ static void k32_QueryPerformanceCounter(void) {
 
 static void mm_timeGetTime(void)  { RET((uint32_t)GetTickCount()); STDRET(0); }
 static void ole_CoInitialize(void) { RET(0); STDRET(1); }   /* S_OK */
+static void ole_CoUninitialize(void) { RET(0); STDRET(0); }
+
+/*
+ * CoCreateInstance must FAIL, and this is the single most important return
+ * value in the file.
+ *
+ * The generated stub answered 0 -- which is S_OK -- without writing the out
+ * pointer. The game's DirectX version probe does:
+ *
+ *     [esp+0x1c] = 0
+ *     CoCreateInstance(CLSID_DirectMusic, ..., &[esp+0x1c])
+ *     mov eax, [esp+0x1c]        ; believes it has an object
+ *     call [eax]                 ; reads a vtable from NULL
+ *
+ * so S_OK plus a NULL out pointer is a guaranteed null dereference. Saying
+ * "this class is not registered" is both true and what the probe is built to
+ * handle -- it is how the answer comes back as DirectX 6 rather than 6.1.
+ */
+#define REGDB_E_CLASSNOTREG 0x80040154u
+
+static void ole_CoCreateInstance(void) {
+    uint32_t ppv = ARG(4);
+    uint32_t clsid = ARG(0);
+    if (ppv) MEM32(ppv) = 0;
+    fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> "
+                    "REGDB_E_CLASSNOTREG\n", clsid ? MEM32(clsid) : 0);
+    RET(REGDB_E_CLASSNOTREG); STDRET(5);
+}
 
 /* Critical sections: the game is single-threaded through startup, and a real
  * one cannot be used because the game's CRITICAL_SECTION lives in ITS address
@@ -457,10 +485,17 @@ static void k32_LoadLibraryA(void) {
     RET(g_fake_mod); STDRET(1);
 }
 
+uint32_t ddraw_proc(const char* name);      /* ddraw_shims.c */
+
 static void k32_GetProcAddress(void) {
     const char* n = ARG(1) ? (const char*)(uintptr_t)ADDR(ARG(1)) : "(ordinal)";
-    fprintf(stderr, "[dll] GetProcAddress(0x%08X, \"%s\") -> NULL"
-                    "  (not implemented yet)\n", ARG(0), n);
+    uint32_t va = ddraw_proc(n);
+    if (va) {
+        fprintf(stderr, "[dll] GetProcAddress(\"%s\") -> 0x%08X\n", n, va);
+        RET(va); STDRET(2);
+        return;
+    }
+    fprintf(stderr, "[dll] GetProcAddress(\"%s\") -> NULL (not implemented)\n", n);
     RET(0); STDRET(2);
 }
 
@@ -550,5 +585,7 @@ const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
     { "KERNEL32.dll!DeleteCriticalSection",     k32_cs_del },
     { "WINMM.dll!timeGetTime",             mm_timeGetTime },
     { "ole32.dll!CoInitialize",            ole_CoInitialize },
+    { "ole32.dll!CoUninitialize",          ole_CoUninitialize },
+    { "ole32.dll!CoCreateInstance",        ole_CoCreateInstance },
 };
 const unsigned g_crt_shim_count = sizeof(g_crt_shims) / sizeof(g_crt_shims[0]);

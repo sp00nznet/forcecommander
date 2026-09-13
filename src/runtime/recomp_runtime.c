@@ -82,7 +82,17 @@ recomp_func_t recomp_lookup(uint32_t va) {
     return NULL;
 }
 
-recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }
+/*
+ * The hook that makes COM work. A DirectDraw vtable slot holds a synthetic VA
+ * in a reserved range that contains no code; this turns it back into a host
+ * function, so RECOMP_ICALL through a vtable lands in C. It was an unused stub
+ * returning NULL until there was an object model to dispatch.
+ */
+import_fn_t ddraw_lookup_method(uint32_t va);
+
+recomp_func_t recomp_lookup_manual(uint32_t va) {
+    return (recomp_func_t)ddraw_lookup_method(va);
+}
 
 /* A hand-written shim (shims_impl.c) beats the generated stub. Resolved once
  * per IAT slot and cached, because this is on the indirect-call path. */
@@ -251,6 +261,35 @@ int host_pump(void) {
     return 1;
 }
 
+/*
+ * Re-make the backing surface when the game calls SetDisplayMode. The client
+ * area follows, because the splash path depends on GetWindowRect reporting the
+ * client rect and the two must not drift apart.
+ */
+void host_resize(int w, int h) {
+    if (w <= 0 || h <= 0 || (w == g_w && h == g_h)) return;
+    g_w = w; g_h = h;
+    if (g_hwnd) {
+        RECT r = {0, 0, w, h};
+        AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+        SetWindowPos(g_hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top,
+                     SWP_NOMOVE | SWP_NOZORDER);
+        if (g_dib) { DeleteObject(g_dib); g_dib = NULL; }
+        BITMAPINFO bi = {0};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth = g_w;
+        bi.bmiHeader.biHeight = -g_h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        HDC dc = GetDC(g_hwnd);
+        g_dib = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &g_dibbits, NULL, 0);
+        SelectObject(g_memdc, g_dib);
+        ReleaseDC(g_hwnd, dc);
+        printf("  host surface -> %dx%d\n", g_w, g_h);
+    }
+}
+
 void* host_surface(void) { return g_dibbits; }
 int   host_width(void)   { return g_w; }
 int   host_height(void)  { return g_h; }
@@ -414,6 +453,8 @@ int main(int argc, char** argv) {
         if (g_imports[i].conv && !strcmp(g_imports[i].conv, "data")) ndata++;
     printf("  data imports:                 %u\n", ndata);
     stl_init_data_imports();
+    void ddraw_init(void);
+    ddraw_init();
 
     /*
      * A simulated TIB. The very first thing the CRT entry does is
