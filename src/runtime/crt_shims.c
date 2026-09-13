@@ -42,48 +42,129 @@ unsigned g_wait_scale = 1;
 /* ------------------------------------------------------------- allocator */
 
 /*
- * A bump allocator with a size prefix and no reuse. Deliberately the dumbest
- * thing that works: during bring-up the interesting failures are wrong
- * pointers, not fragmentation, and a simple allocator never obscures one. The
- * heap is 128 MB; if a real run exhausts it, that is the signal to write a real
- * one rather than a reason to have written one now.
+ * The target heap: size-binned free lists over one flat region.
  *
- * ponytail: bump-only, no free list. Swap in a real allocator when a run
- * actually runs out, not before.
+ * This was a bump allocator that never reused anything, with a note saying to
+ * swap it for a real one when a run actually ran out rather than before. A run
+ * ran out: the moment the RE3D renderer got as far as building its light and
+ * texture managers, it went through 1,069,123,488 bytes in 641,500
+ * allocations -- the whole gigabyte -- because the game frees constantly
+ * (operator delete at 0x0056EAD0 forwards to MSVCRT free) and nothing came
+ * back. crt_alloc then returned 0 and the next memset went through a null
+ * pointer, which presents as a fault inside msvcrt.dll with no connection to
+ * the cause.
+ *
+ * Binned, not first-fit-with-coalescing, because a linear walk over 600,000
+ * blocks per allocation is its own kind of hang. Every size up to 4 KB gets an
+ * exact-size LIFO list, so alloc and free are both a handful of instructions;
+ * anything larger goes on one list searched first-fit, which is fine because
+ * large blocks are rare.
+ *
+ * The 16-byte header keeps the payload 16-byte aligned, which the STL shims
+ * depend on: MSVC's string buffer carries its reference count in the byte
+ * before the data, so a live _Ptr always has (p & 15) == 1 and s_ptr_ok reads
+ * that as "this is a string buffer and not an integer that happens to land in
+ * the heap".
+ *
+ * ponytail: no coalescing, so a run that allocates a million 32-byte blocks,
+ * frees them all and then wants one big one still fails. Add coalescing (a
+ * footer, or a walk on exhaustion) if that shape ever shows up; the exact-size
+ * reuse is what the game's pattern actually needs.
  */
 #define HEAP_BASE 0x10000000u
 #define HEAP_SIZE 0x40000000u   /* 1 GB -- see FOCOM_HEAP_SIZE */
 
-static uint32_t heap_next = HEAP_BASE + 16;
-static uint32_t heap_peak = 0;
-static unsigned heap_allocs = 0;
+#define HEAP_HDR   16u          /* bytes before the payload */
+#define HEAP_GRAIN 16u
+#define HEAP_BINS  256u         /* 16 .. 4096 bytes, in 16-byte steps */
+#define BIN_LARGE  0xFFFFFFFFu
+#define HEAP_MAGIC 0x48454150u  /* "HEAP" */
 
-uint32_t crt_alloc(uint32_t n) {
-    if (!n) n = 1;
-    uint32_t hdr = (heap_next + 15) & ~15u;      /* 16-byte aligned payload */
-    uint32_t ptr = hdr + 16;
-    if (ptr + n > HEAP_BASE + HEAP_SIZE) {
-        fprintf(stderr, "[crt] heap exhausted at %u bytes (%u allocations)\n",
-                heap_peak, heap_allocs);
-        return 0;
+/* header, relative to the payload pointer p */
+#define H_SIZE(p)  MEM32((p) - 16)      /* payload bytes, rounded to GRAIN */
+#define H_BIN(p)   MEM32((p) - 12)
+#define H_NEXT(p)  MEM32((p) - 8)       /* free-list link, while free */
+#define H_MAGIC(p) MEM32((p) - 4)
+
+static uint32_t heap_next = HEAP_BASE + HEAP_HDR;
+static uint32_t heap_peak = 0;
+static uint32_t heap_bin[HEAP_BINS];
+static uint32_t heap_large;
+static unsigned heap_allocs, heap_reused, heap_frees;
+
+static uint32_t heap_take(uint32_t n16, uint32_t bin) {
+    uint32_t p;
+    if (bin != BIN_LARGE) {
+        p = heap_bin[bin];
+        if (!p) return 0;
+        heap_bin[bin] = H_NEXT(p);
+        heap_reused++;
+        return p;
     }
-    MEM32(hdr) = n;                              /* size, for realloc */
-    heap_next = ptr + n;
-    heap_peak = heap_next - HEAP_BASE;
-    heap_allocs++;
-    return ptr;
+    /* first fit on the large list, keeping the predecessor to unlink */
+    uint32_t prev = 0;
+    for (p = heap_large; p; prev = p, p = H_NEXT(p)) {
+        if (H_SIZE(p) < n16) continue;
+        if (prev) H_NEXT(prev) = H_NEXT(p); else heap_large = H_NEXT(p);
+        heap_reused++;
+        return p;
+    }
+    return 0;
 }
 
-/* The size crt_alloc recorded for a block. stl_shims.c uses it to tell a
- * real string buffer from an integer that happens to land in the heap. */
+uint32_t crt_alloc(uint32_t n) {
+    uint32_t n16 = (n + (HEAP_GRAIN - 1)) & ~(HEAP_GRAIN - 1);
+    if (!n16) n16 = HEAP_GRAIN;
+    uint32_t bin = (n16 <= HEAP_BINS * HEAP_GRAIN) ? (n16 / HEAP_GRAIN) - 1
+                                                   : BIN_LARGE;
+
+    uint32_t p = heap_take(n16, bin);
+    if (p) { H_MAGIC(p) = HEAP_MAGIC; heap_allocs++; return p; }
+
+    p = heap_next + HEAP_HDR;
+    if (p + n16 > HEAP_BASE + HEAP_SIZE) {
+        fprintf(stderr, "[crt] heap exhausted: %u bytes, %u allocations,"
+                        " %u frees, %u reused\n",
+                heap_peak, heap_allocs, heap_frees, heap_reused);
+        return 0;
+    }
+    heap_next = p + n16;
+    heap_peak = heap_next - HEAP_BASE;
+    H_SIZE(p) = n16;
+    H_BIN(p) = bin;
+    H_MAGIC(p) = HEAP_MAGIC;
+    heap_allocs++;
+    return p;
+}
+
+/*
+ * Release a block. A pointer that is not one of ours -- a stack address, an
+ * interior pointer, something the game never got from here -- is ignored
+ * rather than trusted, because the alternative is corrupting a free list and
+ * failing somewhere unrelated.
+ */
+void crt_release(uint32_t p) {
+    if (p < HEAP_BASE + HEAP_HDR || p >= heap_next) return;
+    if ((p & (HEAP_GRAIN - 1)) != 0) return;
+    if (H_MAGIC(p) != HEAP_MAGIC) return;
+    H_MAGIC(p) = 0;                       /* so a double free is a no-op */
+    heap_frees++;
+    uint32_t bin = H_BIN(p);
+    if (bin == BIN_LARGE) { H_NEXT(p) = heap_large; heap_large = p; }
+    else if (bin < HEAP_BINS) { H_NEXT(p) = heap_bin[bin]; heap_bin[bin] = p; }
+}
+
+/* The size crt_alloc recorded for a block. */
 uint32_t crt_size_of(uint32_t ptr) {
-    return ptr ? MEM32(ptr - 16) : 0;
+    return ptr ? H_SIZE(ptr) : 0;
 }
 
 uint32_t crt_heap_end(void) { return heap_next; }
 
 void crt_heap_stats(void) {
-    printf("  heap: %u allocations, %u bytes high-water\n", heap_allocs, heap_peak);
+    printf("  heap: %u allocations (%u reused), %u frees,"
+           " %u bytes high-water\n",
+           heap_allocs, heap_reused, heap_frees, heap_peak);
 }
 
 /* ---------------------------------------------------------- FILE handles */
@@ -190,7 +271,7 @@ static void call_lifted(recomp_func_t f) {
 
 /* memory */
 static void crt_malloc(void)  { RET(crt_alloc(ARG(0))); CDECLRET(); }
-static void crt_free(void)    { (void)ARG(0); RET(0); CDECLRET(); }
+static void crt_free(void)    { crt_release(ARG(0)); RET(0); CDECLRET(); }
 static void crt_calloc(void)  {
     uint32_t n = ARG(0) * ARG(1), p = crt_alloc(n);
     if (p) memset((void*)(uintptr_t)ADDR(p), 0, n);
@@ -199,9 +280,13 @@ static void crt_calloc(void)  {
 static void crt_realloc(void) {
     uint32_t old = ARG(0), n = ARG(1);
     if (!old) { RET(crt_alloc(n)); CDECLRET(); return; }
-    uint32_t osz = crt_size_of(old), p = crt_alloc(n);
-    if (p) memcpy((void*)(uintptr_t)ADDR(p), (void*)(uintptr_t)ADDR(old),
-                  osz < n ? osz : n);
+    uint32_t osz = crt_size_of(old);
+    if (n <= osz) { RET(old); CDECLRET(); return; }   /* already big enough */
+    uint32_t p = crt_alloc(n);
+    if (p) {
+        memcpy((void*)(uintptr_t)ADDR(p), (void*)(uintptr_t)ADDR(old), osz);
+        crt_release(old);
+    }
     RET(p); CDECLRET();
 }
 /* operator new / delete are MSVCRT exports too. */

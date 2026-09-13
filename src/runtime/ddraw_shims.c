@@ -49,6 +49,7 @@ void     host_resize(int w, int h);
 
 #define DD_OK             0
 #define DDERR_UNSUPPORTED 0x80004001u
+#define DDERR_NOTFOUND    0x887600FFu   /* MAKE_DDHRESULT(255) */
 #define E_NOINTERFACE     0x80004002u
 
 /* ---------------------------------------------- synthetic method addresses */
@@ -122,6 +123,8 @@ const char* ddraw_method_name(uint32_t va) {
  *   +0x1C  pixel buffer VA
  *   +0x20  caps (DDSCAPS_PRIMARYSURFACE etc.)
  *   +0x24  back-buffer VA (for a flipping chain)
+ *   +0x28  the IDirectDraw this surface was created from
+ *   +0x2C  an explicitly attached surface (the Z buffer)
  */
 #define O_VTBL(o)   MEM32((o) + 0x00)
 #define O_REF(o)    MEM32((o) + 0x04)
@@ -133,6 +136,8 @@ const char* ddraw_method_name(uint32_t va) {
 #define O_BITS(o)   MEM32((o) + 0x1C)
 #define O_CAPS(o)   MEM32((o) + 0x20)
 #define O_BACK(o)   MEM32((o) + 0x24)
+#define O_OWNER(o)  MEM32((o) + 0x28)
+#define O_ATTACH(o) MEM32((o) + 0x2C)
 #define O_SIZE      0x30
 
 #define KIND_DD      1
@@ -141,6 +146,9 @@ const char* ddraw_method_name(uint32_t va) {
 #define DDSCAPS_PRIMARYSURFACE 0x00000200u
 #define DDSCAPS_BACKBUFFER     0x00000004u
 #define DDSCAPS_FLIP           0x00000010u
+#define DDSCAPS_ZBUFFER        0x00020000u
+#define DDSCAPS_MIPMAP         0x00400000u
+#define DDSCAPS_TEXTURE        0x00001000u
 
 static uint32_t g_vtbl_dd, g_vtbl_surf;
 uint32_t ddraw_d3d_vtable(void);   /* defined near the Direct3D block */
@@ -280,14 +288,25 @@ static void dd_SetCooperativeLevel(void) {
     RET(DD_OK); STDRET(3);
 }
 
+/*
+ * SetDisplayMode(w, h, bpp, refresh, flags) -- FIVE arguments.
+ *
+ * IDirectDraw v1 took three, and the shim purged for three. The game holds an
+ * IDirectDraw7 (it came from DirectDrawCreateEx, and it calls GetAvailableVidMem
+ * which only exists from DD2 on), so eight bytes of refresh rate and flags were
+ * left on the target stack. The caller then popped its saved registers off the
+ * wrong slots: CUtilityDevice::SelectRenderer came back from creating the
+ * screen with `this` == 0 and faulted writing this+0x48. Two registers of
+ * collateral from one wrong purge count, a long way from the shim.
+ */
 static void dd_SetDisplayMode(void) {
     g_mode_w = (int)ARG(1);
     g_mode_h = (int)ARG(2);
     g_mode_bpp = (int)ARG(3);
-    fprintf(stderr, "[dd] SetDisplayMode %dx%d %dbpp\n",
-            g_mode_w, g_mode_h, g_mode_bpp);
+    fprintf(stderr, "[dd] SetDisplayMode %dx%d %dbpp refresh=%u flags=0x%X\n",
+            g_mode_w, g_mode_h, g_mode_bpp, ARG(4), ARG(5));
     host_resize(g_mode_w, g_mode_h);
-    RET(DD_OK); STDRET(4);
+    RET(DD_OK); STDRET(6);
 }
 
 static void dd_RestoreDisplayMode(void) { RET(DD_OK); STDRET(1); }
@@ -418,8 +437,10 @@ static void dd_CreateSurface(void) {
         if (backs || (caps & DDSCAPS_FLIP)) {
             uint32_t b = make_surface(w, h, O_BPP(s), DDSCAPS_BACKBUFFER);
             O_BACK(s) = b;
+            if (b) O_OWNER(b) = ARG(0);
         }
     }
+    O_OWNER(s) = ARG(0);
     if (pps) MEM32(pps) = s;
     fprintf(stderr, "[dd] CreateSurface %ux%u %ubpp caps=0x%X flags=0x%X -> "
                     "0x%08X%s\n", w, h, O_BPP(s), caps, flags, s,
@@ -547,7 +568,8 @@ static void dd_EnumSurfaces(void) { RET(DD_OK); STDRET(5); }
 static void sf_Lock(void) {
     uint32_t s = ARG(0), desc = ARG(2);
     if (desc) {
-        MEM32(desc + 0x00) = 0x6C;
+        for (uint32_t i = 0; i < DDSD2_SIZE; i += 4) MEM32(desc + i) = 0;
+        MEM32(desc + 0x00) = DDSD2_SIZE;
         MEM32(desc + 0x04) = 0x0000100F;          /* incl. DDSD_LPSURFACE */
         MEM32(desc + 0x08) = O_H(s);
         MEM32(desc + 0x0C) = O_W(s);
@@ -633,7 +655,8 @@ static void sf_BltFast(void) {
 static void sf_GetSurfaceDesc(void) {
     uint32_t s = ARG(0), d = ARG(1);
     if (d) {
-        MEM32(d + 0x00) = 0x6C;
+        for (uint32_t i = 0; i < DDSD2_SIZE; i += 4) MEM32(d + i) = 0;
+        MEM32(d + 0x00) = DDSD2_SIZE;
         MEM32(d + 0x04) = 0x0000100F;
         MEM32(d + 0x08) = O_H(s);
         MEM32(d + 0x0C) = O_W(s);
@@ -676,9 +699,66 @@ static void sf_GetCaps(void) {
     RET(DD_OK); STDRET(2);
 }
 
+/*
+ * GetDDInterface(LPVOID*) -- hand back the IDirectDraw that owns the surface.
+ *
+ * It was sf_ok2, which returns DD_OK and leaves the out pointer holding
+ * whatever the caller had there. RE3D (sub_00773DF0) calls straight through
+ * the result to get at the device, so a stub here is a fault one call later
+ * with nothing to connect it to.
+ */
+static void sf_GetDDInterface(void) {
+    uint32_t dd = O_OWNER(ARG(0));
+    if (ARG(1)) MEM32(ARG(1)) = dd;
+    if (dd) O_REF(dd)++;
+    RET(dd ? DD_OK : DDERR_UNSUPPORTED); STDRET(2);
+}
+
+/*
+ * GetAttachedSurface(LPDDSCAPS2, LPDIRECTDRAWSURFACE7*) -- and it has to be
+ * able to say no.
+ *
+ * This returned the surface itself when it had nothing attached, on the theory
+ * that a non-NULL answer was the safer one. It is the opposite: the DX7
+ * texture manager walks a mipmap chain with
+ *
+ *     while (surf) { Lock(surf); record the format; surf = next mip level; }
+ *
+ * and the terminator is GetAttachedSurface refusing. Handing back the same
+ * surface every time made that loop run forever -- 280,000 iterations, each
+ * appending to two vectors, until the whole gigabyte of target heap was gone
+ * and the failure surfaced as a null-pointer memset inside msvcrt.
+ *
+ * So: match the caps that were asked for, and DDERR_NOTFOUND when nothing
+ * does. A flipping primary has a back buffer; a render target has whatever
+ * AddAttachedSurface gave it (the Z buffer); nothing here has mipmaps.
+ */
 static void sf_GetAttachedSurface(void) {
-    uint32_t s = ARG(0);
-    if (ARG(2)) MEM32(ARG(2)) = O_BACK(s) ? O_BACK(s) : s;
+    uint32_t s = ARG(0), pcaps = ARG(1), out = ARG(2);
+    uint32_t want = pcaps ? MEM32(pcaps) : 0;      /* DDSCAPS2.dwCaps */
+    uint32_t r = 0;
+
+    if ((want & DDSCAPS_BACKBUFFER) && O_BACK(s)) r = O_BACK(s);
+    else if (O_ATTACH(s) && (!want || (want & O_CAPS(O_ATTACH(s)))))
+        r = O_ATTACH(s);
+    else if (!want && O_BACK(s)) r = O_BACK(s);
+
+    if (out) MEM32(out) = r;
+    if (!r) { RET(DDERR_NOTFOUND); STDRET(3); return; }
+    O_REF(r)++;
+    RET(DD_OK); STDRET(3);
+}
+
+/* AddAttachedSurface(surf): one slot is enough -- the game attaches a Z buffer
+ * to its render target and nothing else. */
+static void sf_AddAttachedSurface(void) {
+    O_ATTACH(ARG(0)) = ARG(1);
+    if (ARG(1)) O_REF(ARG(1))++;
+    RET(DD_OK); STDRET(2);
+}
+
+static void sf_DeleteAttachedSurface(void) {
+    if (!ARG(2) || ARG(2) == O_ATTACH(ARG(0))) O_ATTACH(ARG(0)) = 0;
     RET(DD_OK); STDRET(3);
 }
 
@@ -745,14 +825,14 @@ void ddraw_init(void) {
         {sf_ok1,                  "IDirectDraw4::RestoreAllSurfaces"},
         {sf_ok1,                  "IDirectDraw4::TestCooperativeLevel"},
         {sf_ok3,                  "IDirectDraw4::GetDeviceIdentifier"},
-        {sf_ok3,                  "IDirectDraw7::StartModeTest"},
-        {sf_ok2,                  "IDirectDraw7::EvaluateMode"},
+        {sf_ok4,                  "IDirectDraw7::StartModeTest"},
+        {sf_ok3,                  "IDirectDraw7::EvaluateMode"},
     };
     static const vtent_t sf[] = {
         {m_QueryInterface,        "Surface::QueryInterface"},
         {m_AddRef,                "Surface::AddRef"},
         {m_Release,               "Surface::Release"},
-        {sf_ok2,                  "Surface::AddAttachedSurface"},
+        {sf_AddAttachedSurface,   "Surface::AddAttachedSurface"},
         {sf_ok2,                  "Surface::AddOverlayDirtyRect"},
         {sf_Blt,                  "Surface::Blt"},
         {sf_ok4,                  "Surface::BltBatch"},
@@ -786,7 +866,7 @@ void ddraw_init(void) {
         {sf_ok2,                  "Surface::UpdateOverlayDisplay"},
         {sf_ok3,                  "Surface::UpdateOverlayZOrder"},
         /* v2..v7 append these; stubs, but present so a v7 pointer is callable. */
-        {sf_ok2,                  "Surface2::GetDDInterface"},
+        {sf_GetDDInterface,       "Surface2::GetDDInterface"},
         {sf_ok1,                  "Surface2::PageLock"},
         {sf_ok1,                  "Surface2::PageUnlock"},
         {sf_ok3,                  "Surface3::SetSurfaceDesc"},
@@ -1167,6 +1247,18 @@ uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name) {
  * turns "implement Direct3D" into an ordered list taken from a real run.
  */
 static uint32_t g_vtbl_d3d, g_vtbl_d3ddev;
+static void d3d_EnumDevices(void);
+static void d3d_CreateDevice(void);
+static void d3d_CreateVertexBuffer(void);
+static void d3d_EnumZBufferFormats(void);
+static void d3d_EvictManagedTextures(void);
+
+/* IDirect3DDevice7 state, declared here because the IDirect3D7 methods that
+ * create the device set the first three. */
+static uint32_t g_d3d_rt;                       /* render target surface */
+static uint32_t g_d3d_dev;                      /* the one device object */
+static uint32_t g_d3d_devdesc;                  /* a target copy of the HAL desc */
+
 
 /*
  * IDirect3D7::EnumDevices(callback, context).
@@ -1222,11 +1314,6 @@ static void d3d_EnumDevices(void) {
     d.wMaxSimultaneousTextures = 1;        /* the software rasteriser's answer */
     d.dwMaxActiveLights = 8;
     d.dvMaxVertexW = 1.0e10f;
-    /* IID_IDirect3DRGBDevice, written out rather than referenced: d3d.h only
-     * DECLARES it and the definition lives in dxguid.lib. */
-    static const GUID rgb_device =
-        {0xA4665C60,0x2673,0x11CF,{0xA3,0x1A,0x00,0xAA,0x00,0xB9,0x33,0x56}};
-    d.deviceGUID = rgb_device;
 
     /* Both D3DPRIMCAPS describe the same rasteriser. */
     D3DPRIMCAPS pc;
@@ -1267,29 +1354,76 @@ static void d3d_EnumDevices(void) {
     d.dpcLineCaps = pc;
     d.dpcTriCaps  = pc;
 
-    uint32_t desc = crt_alloc(64), name = crt_alloc(32);
-    uint32_t dd   = crt_alloc(sizeof d);
-    strcpy((char*)(uintptr_t)ADDR(desc), "Microsoft Direct3D RGB Software Emulation");
-    strcpy((char*)(uintptr_t)ADDR(name), "RGB Emulation");
-    memcpy((void*)(uintptr_t)ADDR(dd), &d, sizeof d);
+    /*
+     * Two devices, and the HAL is not optional.
+     *
+     * The game's callback (sub_0076ACC0) files each device into one of four
+     * fixed slots by GUID -- TnLHal, HAL, RGB, Ref -- and CDD7Device keeps all
+     * four 236-byte descriptions inline, at device+0x2D4, +0x3E0, +0x4EC and
+     * +0x5F8. Then sub_007321C0 -- the gate that decides whether the device can
+     * have a screen at all -- reads dwDeviceRenderBitDepth at a HARDCODED
+     * offset: device + 0x454, which is desc+0x74 of the HAL slot.
+     *
+     * Offering only the RGB software device left that slot zeroed, the
+     * `test ah,4` for DDBD_16 failed, and the screen and renderer registration
+     * in the rest of the constructor was skipped: no CDD7WinScreen, no
+     * Direct3D device, and a front end that ran 61 frames with nothing to draw
+     * on. The RGB description was sitting correctly in slot 3 at device+0x560
+     * the whole time (0x700 = DDBD_16|24|32), which is how the offsets were
+     * confirmed rather than guessed.
+     *
+     * So the HAL is announced as well, with the video-memory capability bits a
+     * real accelerated part reports. Nothing behind it is hardware -- this
+     * layer draws everything itself -- but "this machine has an accelerated
+     * device" is true, and it is the question RE3D is actually asking.
+     *
+     * ponytail: TnLHal and Ref are still absent. Add them if something reads
+     * their slots (device+0x348 and +0x66C are the same field); each one is
+     * another set of caps to keep honest.
+     */
+    static const struct { GUID guid; const char* name; const char* desc;
+                          uint32_t extra_devcaps; } devices[] = {
+        {{0x84E63DE0,0x46AA,0x11CF,{0x81,0x6F,0x00,0x00,0xC0,0x20,0x15,0x6E}},
+         "Direct3D HAL",
+         "Microsoft Direct3D Hardware acceleration through Direct3D HAL",
+         D3DDEVCAPS_EXECUTEVIDEOMEMORY | D3DDEVCAPS_TLVERTEXVIDEOMEMORY
+         | D3DDEVCAPS_TEXTUREVIDEOMEMORY | D3DDEVCAPS_TEXTURENONLOCALVIDMEM},
+        {{0xA4665C60,0x2673,0x11CF,{0xA3,0x1A,0x00,0xAA,0x00,0xB9,0x33,0x56}},
+         "RGB Emulation", "Microsoft Direct3D RGB Software Emulation", 0},
+    };
 
-    fprintf(stderr, "[d3d] EnumDevices callback=0x%08X -> RGB Emulation (desc %u bytes at 0x%08X)\n",
-            cb, (unsigned)sizeof d, dd);
+    uint32_t base_devcaps = d.dwDevCaps;
+    for (unsigned i = 0; i < sizeof devices / sizeof devices[0]; i++) {
+        d.deviceGUID = devices[i].guid;
+        d.dwDevCaps = base_devcaps | devices[i].extra_devcaps;
 
-    /* stdcall, pushed right to left, then the dummy return address the
-     * callback's own `ret` will pop. D3DENUMRET_OK means "keep going". */
-    uint32_t save = g_esp, save_fn = g_cur_func;
-    PUSH32(g_esp, ctx);
-    PUSH32(g_esp, dd);
-    PUSH32(g_esp, name);
-    PUSH32(g_esp, desc);
-    PUSH32(g_esp, RECOMP_RETADDR);
-    f();
-    g_cur_func = save_fn;
-    if (g_esp != save) {
-        fprintf(stderr, "[d3d] EnumDevices callback left esp at 0x%08X,"
-                        " expected 0x%08X\n", g_esp, save);
-        g_esp = save;
+        uint32_t desc = crt_alloc(96), name = crt_alloc(32);
+        uint32_t dd   = crt_alloc(sizeof d);
+        strcpy((char*)(uintptr_t)ADDR(desc), devices[i].desc);
+        strcpy((char*)(uintptr_t)ADDR(name), devices[i].name);
+        memcpy((void*)(uintptr_t)ADDR(dd), &d, sizeof d);
+        if (i == 0) g_d3d_devdesc = dd;         /* the HAL, for GetCaps */
+
+        fprintf(stderr, "[d3d] EnumDevices callback=0x%08X -> %s"
+                        " (desc %u bytes at 0x%08X)\n",
+                cb, devices[i].name, (unsigned)sizeof d, dd);
+
+        /* stdcall, pushed right to left, then the dummy return address the
+         * callback's own `ret` will pop. D3DENUMRET_OK means "keep going". */
+        uint32_t save = g_esp, save_fn = g_cur_func;
+        PUSH32(g_esp, ctx);
+        PUSH32(g_esp, dd);
+        PUSH32(g_esp, name);
+        PUSH32(g_esp, desc);
+        PUSH32(g_esp, RECOMP_RETADDR);
+        f();
+        g_cur_func = save_fn;
+        if (g_esp != save) {
+            fprintf(stderr, "[d3d] EnumDevices callback left esp at 0x%08X,"
+                            " expected 0x%08X\n", g_esp, save);
+            g_esp = save;
+        }
+        if (g_eax == 0) break;      /* D3DENUMRET_CANCEL: it has seen enough */
     }
     RET(DD_OK); STDRET(3);
 }
@@ -1297,7 +1431,13 @@ static void d3d_EnumDevices(void) {
 static void d3d_CreateDevice(void) {
     uint32_t o = obj_new(g_vtbl_d3ddev, KIND_DD);
     if (ARG(3)) MEM32(ARG(3)) = o;
-    fprintf(stderr, "[d3d] CreateDevice -> 0x%08X\n", o);
+    g_d3d_dev = o;
+    /* CreateDevice(guid, surface, ppDevice): the surface it is created against
+     * IS the initial render target, and RE3D never sets one explicitly before
+     * its first Clear. */
+    g_d3d_rt = ARG(2);
+    fprintf(stderr, "[d3d] CreateDevice -> 0x%08X, render target 0x%08X\n",
+            o, g_d3d_rt);
     RET(DD_OK); STDRET(4);
 }
 
@@ -1310,15 +1450,269 @@ static void d3d_CreateVertexBuffer(void) {
 static void d3d_EnumZBufferFormats(void) { RET(DD_OK); STDRET(4); }
 static void d3d_EvictManagedTextures(void) { RET(DD_OK); STDRET(1); }
 
-#define D3DDEV_SLOTS 48
+/* ------------------------------------------------- IDirect3DDevice7
+ *
+ * 49 methods, and the purge count of every one of them is a fact about the DX7
+ * headers rather than a guess -- which matters, because getting SetDisplayMode
+ * wrong by two arguments was enough to hand CUtilityDevice::SelectRenderer a
+ * null `this` several calls later. So the table below carries the argument
+ * count next to each name.
+ *
+ * The state setters remember what they were given and the getters hand it
+ * back. That is not politeness: RE3D reads back the viewport and the render
+ * states it set, and a getter that leaves the caller's struct alone gives it
+ * whatever was on the stack.
+ *
+ * ponytail: no rasterisation. Clear() really does clear the render target,
+ * because that is the one drawing operation whose semantics fit in five lines
+ * and it is what makes a frame visibly change; the DrawPrimitive family
+ * accepts its vertices and counts them. Transform, light and material state is
+ * stored and never used. Rasterising is the next job and it is a big one --
+ * this is the layer that has to exist first so the game gets that far.
+ */
+#define D3DDEV_SLOTS 49
 
-static void d3ddev_unimplemented(void) {
-    fprintf(stderr,
-        "\n[d3d] unimplemented IDirect3DDevice7 method -- the [com] line above\n"
-        "      names its slot. Implement it in ddraw_shims.c; no purge count is\n"
-        "      known, so returning would corrupt the stack instead.\n");
-    abort();
+#define D3D_MAXRS      256      /* render states the game may set */
+#define D3D_MAXSTAGE   8
+#define D3D_MAXTSS     32
+#define D3D_MAXLIGHT   16
+
+static uint32_t g_d3d_rs[D3D_MAXRS];
+static uint32_t g_d3d_tss[D3D_MAXSTAGE][D3D_MAXTSS];
+static uint32_t g_d3d_tex[D3D_MAXSTAGE];
+static uint8_t  g_d3d_lighton[D3D_MAXLIGHT];
+static float    g_d3d_xf[8][16];                /* world/view/projection/... */
+static uint32_t g_d3d_viewport[6];              /* x, y, w, h, minz, maxz */
+static uint32_t g_d3d_prims;                    /* primitives accepted */
+
+static void d3ddev_QueryInterface(void) {
+    /* The game asks a device for IID_IDirect3DDevice7 to confirm what it has. */
+    if (ARG(2)) MEM32(ARG(2)) = ARG(0);
+    O_REF(ARG(0))++;
+    RET(DD_OK); STDRET(3);
 }
+
+static void d3ddev_GetCaps(void) {
+    /* The same description that was enumerated. A device whose caps differ
+     * from the ones it was chosen for is how a renderer ends up asking for
+     * something this layer never offered. */
+    if (ARG(1) && g_d3d_devdesc)
+        memcpy((void*)(uintptr_t)ADDR(ARG(1)),
+               (void*)(uintptr_t)ADDR(g_d3d_devdesc), sizeof(D3DDEVICEDESC7));
+    RET(DD_OK); STDRET(2);
+}
+
+/*
+ * EnumTextureFormats(callback, context).
+ *
+ * The callback takes a DDPIXELFORMAT, and returning without calling it means
+ * "this device can draw no textures", which is not an answer any renderer can
+ * work with. Four formats: 565 opaque, 1555 and 4444 for alpha, and 8888.
+ */
+static void d3ddev_EnumTextureFormats(void) {
+    uint32_t cb = ARG(1), ctx = ARG(2);
+    recomp_func_t f = cb ? recomp_lookup(cb) : NULL;
+    if (!f) { RET(DD_OK); STDRET(3); return; }
+
+    static const struct { uint32_t flags, bits, r, g, b, a; } fmts[] = {
+        {0x40,       16, 0xF800,     0x07E0,     0x001F,     0},           /* RGB 565  */
+        {0x40|0x1,   16, 0x7C00,     0x03E0,     0x001F,     0x8000},      /* ARGB 1555 */
+        {0x40|0x1,   16, 0x0F00,     0x00F0,     0x000F,     0xF000},      /* ARGB 4444 */
+        {0x40,       32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0},           /* RGB 888  */
+        {0x40|0x1,   32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000},  /* ARGB 8888 */
+    };
+    uint32_t pf = crt_alloc(32);
+    for (unsigned i = 0; i < sizeof fmts / sizeof fmts[0]; i++) {
+        for (uint32_t k = 0; k < 32; k += 4) MEM32(pf + k) = 0;
+        MEM32(pf + 0x00) = 32;               /* dwSize */
+        MEM32(pf + 0x04) = fmts[i].flags;    /* DDPF_RGB | DDPF_ALPHAPIXELS */
+        MEM32(pf + 0x0C) = fmts[i].bits;     /* dwRGBBitCount */
+        MEM32(pf + 0x10) = fmts[i].r;
+        MEM32(pf + 0x14) = fmts[i].g;
+        MEM32(pf + 0x18) = fmts[i].b;
+        MEM32(pf + 0x1C) = fmts[i].a;
+
+        uint32_t save = g_esp, save_fn = g_cur_func;
+        PUSH32(g_esp, ctx);
+        PUSH32(g_esp, pf);
+        PUSH32(g_esp, RECOMP_RETADDR);
+        f();
+        g_cur_func = save_fn;
+        if (g_esp != save) g_esp = save;
+        if (g_eax == 0) break;               /* D3DENUMRET_CANCEL */
+    }
+    RET(DD_OK); STDRET(3);
+}
+
+static void d3ddev_BeginScene(void) { RET(DD_OK); STDRET(1); }
+static void d3ddev_EndScene(void)   { RET(DD_OK); STDRET(1); }
+
+static void d3ddev_GetDirect3D(void) {
+    if (ARG(1)) MEM32(ARG(1)) = obj_new(ddraw_d3d_vtable(), KIND_DD);
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_SetRenderTarget(void) {
+    g_d3d_rt = ARG(1);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetRenderTarget(void) {
+    if (ARG(1)) MEM32(ARG(1)) = g_d3d_rt;
+    if (g_d3d_rt) O_REF(g_d3d_rt)++;
+    RET(DD_OK); STDRET(2);
+}
+
+/*
+ * Clear(count, rects, flags, colour, z, stencil) -- and this one is real.
+ *
+ * D3DCLEAR_TARGET is 1. The colour arrives as 0x00RRGGBB and the render target
+ * is 565 in the mode the game picked, so it is converted here the same way
+ * present_surface converts the other way. Honouring the rectangle list is not
+ * worth it: RE3D clears the whole target.
+ */
+static void d3ddev_Clear(void) {
+    uint32_t flags = ARG(3), colour = ARG(4);
+    uint32_t s = g_d3d_rt;
+    if ((flags & 1u) && s && O_BITS(s)) {
+        uint32_t w = O_W(s), h = O_H(s), pitch = O_PITCH(s);
+        uint8_t* base = (uint8_t*)(uintptr_t)ADDR(O_BITS(s));
+        if (O_BPP(s) == 16) {
+            uint16_t c = (uint16_t)(((colour >> 8) & 0xF800u)
+                                  | ((colour >> 5) & 0x07E0u)
+                                  | ((colour >> 3) & 0x001Fu));
+            for (uint32_t y = 0; y < h; y++) {
+                uint16_t* row = (uint16_t*)(base + (size_t)y * pitch);
+                for (uint32_t x = 0; x < w; x++) row[x] = c;
+            }
+        } else if (O_BPP(s) == 32) {
+            for (uint32_t y = 0; y < h; y++) {
+                uint32_t* row = (uint32_t*)(base + (size_t)y * pitch);
+                for (uint32_t x = 0; x < w; x++) row[x] = colour;
+            }
+        }
+    }
+    RET(DD_OK); STDRET(7);
+}
+
+static void d3ddev_SetTransform(void) {
+    uint32_t st = ARG(1), m = ARG(2);
+    if (m && st < 8)
+        memcpy(g_d3d_xf[st], (void*)(uintptr_t)ADDR(m), 64);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetTransform(void) {
+    uint32_t st = ARG(1), m = ARG(2);
+    if (m && st < 8)
+        memcpy((void*)(uintptr_t)ADDR(m), g_d3d_xf[st], 64);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_MultiplyTransform(void) { RET(DD_OK); STDRET(3); }
+
+static void d3ddev_SetViewport(void) {
+    uint32_t v = ARG(1);
+    if (v) for (int i = 0; i < 6; i++) g_d3d_viewport[i] = MEM32(v + i * 4);
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_GetViewport(void) {
+    uint32_t v = ARG(1);
+    if (v) for (int i = 0; i < 6; i++) MEM32(v + i * 4) = g_d3d_viewport[i];
+    RET(DD_OK); STDRET(2);
+}
+
+static void d3ddev_SetMaterial(void) { RET(DD_OK); STDRET(2); }
+static void d3ddev_GetMaterial(void) {
+    /* D3DMATERIAL7 is 16 floats plus a power; a getter that leaves it alone
+     * gives the caller stack contents to multiply colours by. */
+    if (ARG(1)) for (int i = 0; i < 0x44; i += 4) MEM32(ARG(1) + i) = 0;
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_SetLight(void) { RET(DD_OK); STDRET(3); }
+static void d3ddev_GetLight(void) {
+    if (ARG(2)) for (int i = 0; i < 0x68; i += 4) MEM32(ARG(2) + i) = 0;
+    RET(DD_OK); STDRET(3);
+}
+
+static void d3ddev_SetRenderState(void) {
+    if (ARG(1) < D3D_MAXRS) g_d3d_rs[ARG(1)] = ARG(2);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetRenderState(void) {
+    if (ARG(2)) MEM32(ARG(2)) = (ARG(1) < D3D_MAXRS) ? g_d3d_rs[ARG(1)] : 0;
+    RET(DD_OK); STDRET(3);
+}
+
+static void d3ddev_BeginStateBlock(void) { RET(DD_OK); STDRET(1); }
+static void d3ddev_EndStateBlock(void) {
+    static uint32_t next = 1;
+    if (ARG(1)) MEM32(ARG(1)) = next++;
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_PreLoad(void) { RET(DD_OK); STDRET(2); }
+
+/* The DrawPrimitive family: accepted and counted, not rasterised. */
+static void d3ddev_draw5(void) { g_d3d_prims++; RET(DD_OK); STDRET(6); }
+static void d3ddev_draw7(void) { g_d3d_prims++; RET(DD_OK); STDRET(8); }
+static void d3ddev_draw4(void) { g_d3d_prims++; RET(DD_OK); STDRET(5); }
+static void d3ddev_draw6(void) { g_d3d_prims++; RET(DD_OK); STDRET(7); }
+
+static void d3ddev_SetClipStatus(void) { RET(DD_OK); STDRET(2); }
+static void d3ddev_GetClipStatus(void) {
+    /* D3DCLIPSTATUS: dwFlags, dwStatus, then six floats of extents. */
+    if (ARG(1)) for (int i = 0; i < 0x20; i += 4) MEM32(ARG(1) + i) = 0;
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_ComputeSphereVisibility(void) {
+    /* One DWORD per sphere; 0 means "wholly inside the frustum". */
+    uint32_t n = ARG(2), out = ARG(4);
+    if (out) for (uint32_t i = 0; i < n; i++) MEM32(out + i * 4) = 0;
+    RET(DD_OK); STDRET(5);
+}
+
+static void d3ddev_GetTexture(void) {
+    if (ARG(2)) MEM32(ARG(2)) = (ARG(1) < D3D_MAXSTAGE) ? g_d3d_tex[ARG(1)] : 0;
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_SetTexture(void) {
+    if (ARG(1) < D3D_MAXSTAGE) g_d3d_tex[ARG(1)] = ARG(2);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetTextureStageState(void) {
+    uint32_t st = ARG(1), k = ARG(2);
+    if (ARG(3))
+        MEM32(ARG(3)) = (st < D3D_MAXSTAGE && k < D3D_MAXTSS)
+                      ? g_d3d_tss[st][k] : 0;
+    RET(DD_OK); STDRET(4);
+}
+static void d3ddev_SetTextureStageState(void) {
+    uint32_t st = ARG(1), k = ARG(2);
+    if (st < D3D_MAXSTAGE && k < D3D_MAXTSS) g_d3d_tss[st][k] = ARG(3);
+    RET(DD_OK); STDRET(4);
+}
+static void d3ddev_ValidateDevice(void) {
+    if (ARG(1)) MEM32(ARG(1)) = 1;            /* one pass, no extra work */
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_stateblock1(void) { RET(DD_OK); STDRET(2); }
+static void d3ddev_CreateStateBlock(void) {
+    static uint32_t next = 0x100;
+    if (ARG(2)) MEM32(ARG(2)) = next++;
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_Load(void) { RET(DD_OK); STDRET(6); }
+static void d3ddev_LightEnable(void) {
+    if (ARG(1) < D3D_MAXLIGHT) g_d3d_lighton[ARG(1)] = (uint8_t)(ARG(2) != 0);
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetLightEnable(void) {
+    if (ARG(2))
+        MEM32(ARG(2)) = (ARG(1) < D3D_MAXLIGHT) ? g_d3d_lighton[ARG(1)] : 0;
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_SetClipPlane(void) { RET(DD_OK); STDRET(3); }
+static void d3ddev_GetClipPlane(void) {
+    if (ARG(2)) for (int i = 0; i < 16; i += 4) MEM32(ARG(2) + i) = 0;
+    RET(DD_OK); STDRET(3);
+}
+static void d3ddev_GetInfo(void) { RET(DDERR_UNSUPPORTED); STDRET(4); }
 
 static void d3d_init(void) {
     static const vtent_t d3d[] = {
@@ -1333,16 +1727,58 @@ static void d3d_init(void) {
     };
     g_vtbl_d3d = build_vtable(d3d, sizeof(d3d) / sizeof(d3d[0]));
 
-    uint32_t v = crt_alloc(D3DDEV_SLOTS * 4 + 4);
-    MEM32(v + 0) = method(m_QueryInterface, "IDirect3DDevice7::QueryInterface");
-    MEM32(v + 4) = method(m_AddRef,         "IDirect3DDevice7::AddRef");
-    MEM32(v + 8) = method(m_Release,        "IDirect3DDevice7::Release");
-    for (unsigned i = 3; i < D3DDEV_SLOTS; i++) {
-        static char buf[D3DDEV_SLOTS][32];
-        snprintf(buf[i], sizeof(buf[i]), "IDirect3DDevice7::slot%u", i);
-        MEM32(v + i * 4) = method(d3ddev_unimplemented, buf[i]);
-    }
-    g_vtbl_d3ddev = v;
+    static const vtent_t dev[D3DDEV_SLOTS] = {
+        {d3ddev_QueryInterface,      "IDirect3DDevice7::QueryInterface"},
+        {m_AddRef,                   "IDirect3DDevice7::AddRef"},
+        {m_Release,                  "IDirect3DDevice7::Release"},
+        {d3ddev_GetCaps,             "IDirect3DDevice7::GetCaps"},
+        {d3ddev_EnumTextureFormats,  "IDirect3DDevice7::EnumTextureFormats"},
+        {d3ddev_BeginScene,          "IDirect3DDevice7::BeginScene"},
+        {d3ddev_EndScene,            "IDirect3DDevice7::EndScene"},
+        {d3ddev_GetDirect3D,         "IDirect3DDevice7::GetDirect3D"},
+        {d3ddev_SetRenderTarget,     "IDirect3DDevice7::SetRenderTarget"},
+        {d3ddev_GetRenderTarget,     "IDirect3DDevice7::GetRenderTarget"},
+        {d3ddev_Clear,               "IDirect3DDevice7::Clear"},
+        {d3ddev_SetTransform,        "IDirect3DDevice7::SetTransform"},
+        {d3ddev_GetTransform,        "IDirect3DDevice7::GetTransform"},
+        {d3ddev_SetViewport,         "IDirect3DDevice7::SetViewport"},
+        {d3ddev_MultiplyTransform,   "IDirect3DDevice7::MultiplyTransform"},
+        {d3ddev_GetViewport,         "IDirect3DDevice7::GetViewport"},
+        {d3ddev_SetMaterial,         "IDirect3DDevice7::SetMaterial"},
+        {d3ddev_GetMaterial,         "IDirect3DDevice7::GetMaterial"},
+        {d3ddev_SetLight,            "IDirect3DDevice7::SetLight"},
+        {d3ddev_GetLight,            "IDirect3DDevice7::GetLight"},
+        {d3ddev_SetRenderState,      "IDirect3DDevice7::SetRenderState"},
+        {d3ddev_GetRenderState,      "IDirect3DDevice7::GetRenderState"},
+        {d3ddev_BeginStateBlock,     "IDirect3DDevice7::BeginStateBlock"},
+        {d3ddev_EndStateBlock,       "IDirect3DDevice7::EndStateBlock"},
+        {d3ddev_PreLoad,             "IDirect3DDevice7::PreLoad"},
+        {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitive"},
+        {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitive"},
+        {d3ddev_SetClipStatus,       "IDirect3DDevice7::SetClipStatus"},
+        {d3ddev_GetClipStatus,       "IDirect3DDevice7::GetClipStatus"},
+        {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitiveStrided"},
+        {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitiveStrided"},
+        {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitiveVB"},
+        {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitiveVB"},
+        {d3ddev_ComputeSphereVisibility, "IDirect3DDevice7::ComputeSphereVisibility"},
+        {d3ddev_GetTexture,          "IDirect3DDevice7::GetTexture"},
+        {d3ddev_SetTexture,          "IDirect3DDevice7::SetTexture"},
+        {d3ddev_GetTextureStageState,"IDirect3DDevice7::GetTextureStageState"},
+        {d3ddev_SetTextureStageState,"IDirect3DDevice7::SetTextureStageState"},
+        {d3ddev_ValidateDevice,      "IDirect3DDevice7::ValidateDevice"},
+        {d3ddev_stateblock1,         "IDirect3DDevice7::ApplyStateBlock"},
+        {d3ddev_stateblock1,         "IDirect3DDevice7::CaptureStateBlock"},
+        {d3ddev_stateblock1,         "IDirect3DDevice7::DeleteStateBlock"},
+        {d3ddev_CreateStateBlock,    "IDirect3DDevice7::CreateStateBlock"},
+        {d3ddev_Load,                "IDirect3DDevice7::Load"},
+        {d3ddev_LightEnable,         "IDirect3DDevice7::LightEnable"},
+        {d3ddev_GetLightEnable,      "IDirect3DDevice7::GetLightEnable"},
+        {d3ddev_SetClipPlane,        "IDirect3DDevice7::SetClipPlane"},
+        {d3ddev_GetClipPlane,        "IDirect3DDevice7::GetClipPlane"},
+        {d3ddev_GetInfo,             "IDirect3DDevice7::GetInfo"},
+    };
+    g_vtbl_d3ddev = build_vtable(dev, D3DDEV_SLOTS);
 }
 
 uint32_t ddraw_d3d_vtable(void) {

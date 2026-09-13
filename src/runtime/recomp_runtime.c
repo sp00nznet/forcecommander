@@ -45,6 +45,28 @@ uint32_t  g_icall_count = 0;
  * --watch, --poison, --poke -- live in the toolkit now (recomp_trace.c), so
  * the next target gets them without writing them again. What stays here is
  * what only makes sense for this binary. */
+/*
+ * --scripttrace: one line per executed script line, naming the function.
+ *
+ * sub_00512170 is GamePPVisBase's "run one line". Its second argument is the
+ * compiled line record, [line+4] is the GamePPSysLibraryObj that implements
+ * it, and [[line+4]] is that object's vtable -- which analysis/rtti.json maps
+ * to a class name, so the trace reads as GamePPGlobalSysWaitForever rather
+ * than as an address. --argtrace on the subsystem lookup says which subsystem
+ * a line calls; this says which function.
+ */
+#define VIS_RUN_LINE 0x00512170u
+static int g_scripttrace;
+
+static void focom_trace_extra(uint32_t va) {
+    if (!g_scripttrace || va != VIS_RUN_LINE) return;
+    uint32_t line = MEM32(g_esp + 8);
+    uint32_t obj = line >= 0x00200000u ? MEM32(line + 4) : 0;
+    uint32_t vt = obj >= 0x00200000u ? MEM32(obj) : 0;
+    fprintf(stderr, "[line] t%lu vt=%08X obj=%08X\n",
+            GetCurrentThreadId(), vt, obj);
+}
+
 int g_list_stubs = 0;
 extern int g_no_threads;
 extern int g_threadtrace;
@@ -463,6 +485,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
+        else if (!strcmp(argv[i], "--scripttrace")) {
+            g_scripttrace = 1;
+            recomp_trace_extra = focom_trace_extra;
+        }
         else if (!strcmp(argv[i], "--stlwatch") && i + 1 < argc)
             g_stlwatch = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--run")) run = 1;
