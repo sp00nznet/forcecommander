@@ -43,15 +43,57 @@ uint32_t  g_icall_count = 0;
 #ifdef RECOMP_TRACE
 uint32_t  g_enter_trace[RECOMP_ENTER_SIZE] = {0};
 uint32_t  g_enter_idx = 0;
+/* --calltrace writes every lifted-function entry to a file. The entry ring
+ * only holds the last 1024, and when a startup path loops the interesting
+ * call -- the one that failed -- has already rolled out of it. */
+FILE* g_calltrace = NULL;
+/* --watch VA prints the machine state and the object under ecx every time a
+ * given lifted function is entered. Reading the generated C tells you which
+ * member is dereferenced; only a run tells you what is in it. */
+int g_list_stubs = 0;
+extern int g_shim_trace;
+uint32_t g_poison = 0;
+int g_poison_hit = 0;
+uint32_t g_poison_last = 0;
+extern const char* g_cur_import;
+uint32_t g_watch[8];
+unsigned g_watch_n = 0;
+
 void recomp_trace_enter(uint32_t va) {
-    g_enter_trace[g_enter_idx & (RECOMP_ENTER_SIZE - 1)] = va;
-    g_enter_idx++;
+    if (g_calltrace) fprintf(g_calltrace, "%08X\n", va);
+    /* --poison ADDR reports the first moment a target dword turns into the
+     * high half of a 64-bit host pointer (0x00007FFx). That only happens when a
+     * shim stores a host pointer into target memory, and pairing it with
+     * g_cur_import names which shim did it. */
+    if (g_poison) {
+        uint32_t v = MEM32(g_poison);
+        if (v != g_poison_last && g_poison_hit < 16) {
+            g_poison_hit++;
+            fprintf(stderr, "[poison] 0x%08X: 0x%08X -> 0x%08X on entry to"
+                            " 0x%08X (last import %s)\n",
+                    g_poison, g_poison_last, v, va, g_cur_import);
+            g_poison_last = v;
+        }
+    }
+    for (unsigned w = 0; w < g_watch_n; w++) {
+        if (g_watch[w] != va) continue;
+        fprintf(stderr, "[watch] 0x%08X ecx=%08X eax=%08X esi=%08X edi=%08X esp=%08X\n",
+                va, g_ecx, g_eax, g_esi, g_edi, g_esp);
+        if (g_ecx >= 0x00200000u) {
+            fprintf(stderr, "[watch]   [ecx+00..20]:");
+            for (int k = 0; k <= 0x20; k += 4)
+                fprintf(stderr, " %08X", MEM32(g_ecx + k));
+            fprintf(stderr, "\n");
+        }
+    }
 }
 #endif
 void recomp_dump_trace(const char* why) {
 #ifdef RECOMP_TRACE
     fprintf(stderr, "=== entry trace (%s) ===\n", why ? why : "");
-    for (int i = 32; i > 0; i--) {
+    int depth = (g_enter_idx < RECOMP_ENTER_SIZE) ? (int)g_enter_idx
+                                                : RECOMP_ENTER_SIZE;
+    for (int i = depth; i > 0; i--) {
         uint32_t idx = (g_enter_idx - i) & (RECOMP_ENTER_SIZE - 1);
         if (g_enter_trace[idx]) fprintf(stderr, "  0x%08X\n", g_enter_trace[idx]);
     }
@@ -109,14 +151,30 @@ static void resolve_imports(void) {
         if (f) real++;
     }
     g_resolved_done = 1;
-    printf("  real shims installed:         %u\n", real);
+    printf("  real shims installed:         %u of %u\n", real, g_import_count);
+    /* Which imports are still generated stubs. A stub is not neutral -- it
+     * returns without filling its out parameters, so the caller reads whatever
+     * was on the stack. Listing them up front beats discovering each one as a
+     * fault. */
+    if (g_list_stubs) {
+        for (unsigned i = 0; i < g_import_count && i < 512; i++)
+            if (!shim_real_import(g_imports[i].name))
+                printf("    stub: %s\n", g_imports[i].name);
+    }
 }
+
+/* The name of the import the machine is inside. A fault in a host DLL means a
+ * shim handed Windows a bad pointer, and without this the only evidence is an
+ * address in msvcrt.dll that names neither the shim nor the caller. */
+const char* g_cur_import = "(none)";
 
 recomp_func_t recomp_lookup_import(uint32_t va) {
     if (!g_resolved_done) resolve_imports();
     for (unsigned i = 0; i < g_import_count; i++)
-        if (g_imports[i].iat_va == va)
+        if (g_imports[i].iat_va == va) {
+            g_cur_import = g_imports[i].name;
             return (i < 512) ? g_resolved[i] : g_imports[i].fn;
+        }
     return NULL;
 }
 
@@ -338,8 +396,15 @@ void host_screenshot(const char* path) {
 
 static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
     EXCEPTION_RECORD* r = ep->ExceptionRecord;
-    fprintf(stderr, "\n=== fault 0x%08lX at host rip %p ===\n",
-            r->ExceptionCode, r->ExceptionAddress);
+    /* The host is linked at 0x140000000 with /FIXED:NO, so also print the
+     * address addr2line wants: the faulting rip rebased onto the link base.
+     * Every generated line carries its target VA in a comment, so this turns
+     * "somewhere in 10 million lines of C" into one instruction. */
+    uintptr_t hostbase = (uintptr_t)GetModuleHandleA(NULL);
+    fprintf(stderr, "\n=== fault 0x%08lX at host rip %p (addr2line 0x%llX) ===\n",
+            r->ExceptionCode, r->ExceptionAddress,
+            (unsigned long long)(0x140000000ull +
+                ((uintptr_t)r->ExceptionAddress - hostbase)));
 
     /*
      * For an access violation ExceptionInformation[0] is read/write/execute and
@@ -365,11 +430,24 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
         fprintf(stderr, "  %s of 0x%016llX -- %s\n",
                 op < 3 ? what[op] : "?", (unsigned long long)at, where);
     }
+    /* When the fault is not in our own image the address means nothing on its
+     * own -- it is a host DLL, which says the shim layer handed a bad pointer
+     * to a real Windows function rather than the lifted code going wrong. */
+    HMODULE fm = NULL;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)r->ExceptionAddress, &fm) && fm) {
+        char mn[MAX_PATH] = {0};
+        GetModuleFileNameA(fm, mn, sizeof(mn));
+        fprintf(stderr, "  faulting module: %s +0x%llX\n", mn,
+                (unsigned long long)((uintptr_t)r->ExceptionAddress - (uintptr_t)fm));
+    }
     fprintf(stderr, "current lifted function: 0x%08X\n", g_cur_func);
+    fprintf(stderr, "last import entered: %s\n", g_cur_import);
     fprintf(stderr, "eax=%08X ecx=%08X edx=%08X ebx=%08X\n", g_eax, g_ecx, g_edx, g_ebx);
     fprintf(stderr, "esp=%08X ebp=%08X esi=%08X edi=%08X\n", g_esp, g_ebp, g_esi, g_edi);
-    fprintf(stderr, "last %d indirect targets:\n", 8);
-    for (int i = 8; i > 0; i--) {
+    fprintf(stderr, "last %d indirect targets:\n", ICALL_TRACE_SIZE);
+    for (int i = ICALL_TRACE_SIZE; i > 0; i--) {
         uint32_t idx = (g_icall_trace_idx - i) & (ICALL_TRACE_SIZE - 1);
         if (g_icall_trace[idx]) fprintf(stderr, "  0x%08X\n", g_icall_trace[idx]);
     }
@@ -381,11 +459,21 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
 /* ---------------------------------------------------------------- main */
 
 int main(int argc, char** argv) {
-    const char* exe = (argc > 1) ? argv[1] : "game/Focom.exe";
+    const char* exe = (argc > 1 && argv[1][0] != '-') ? argv[1] : "game/Focom.exe";
     int run = 0, splash = 0, shot = 0;
     const char* shot_path = NULL;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--run")) run = 1;
+        if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
+        else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
+        else if (!strcmp(argv[i], "--poison") && i + 1 < argc)
+            g_poison = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--watch") && i + 1 < argc && g_watch_n < 8)
+            g_watch[g_watch_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--calltrace") && i + 1 < argc)
+            g_calltrace = fopen(argv[++i], "w"),
+            /* unbuffered: a crash must not take the interesting tail with it */
+            g_calltrace ? setvbuf(g_calltrace, NULL, _IONBF, 0) : 0;
+        else if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--splash")) splash = 1;
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
             shot = 1; shot_path = argv[++i];
