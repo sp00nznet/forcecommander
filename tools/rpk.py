@@ -124,6 +124,57 @@ class Pak(object):
         return None
 
 
+# ---------------------------------------------------------------- .pro files
+#
+# 2,039 members are named *.pro and they come in two shapes.
+#
+# A property list, CRLF-separated, is a run of records:
+#
+#     <name> <type> <count>
+#     <count lines of values>
+#
+# `type` is 0 or 1 (1 appears on `flags` and friends -- a bitfield rather than a
+# value list). Values are whitespace-separated numbers, or free text.
+#
+#     id 0 1
+#     218 2 13
+#     inheritID 0 1
+#     2 21 1
+#
+# The other 21 are flat NAME LISTS, one entry per line and no header at all.
+# `dataset.pro/info.pro` is the big one: 44,589 bytes at offset 20, the first
+# member of the whole archive, and it begins `a3de001.wav`. That is what
+# RECON.md saw when it reported "the first member is a3de001.wav" -- it was
+# reading this list's contents, not a member of that name. The two readings
+# agree.
+#
+# ponytail: values stay strings. Nothing here needs them typed, and the game's
+# own types are per-key rather than per-record.
+
+
+def parse_pro(data):
+    """`(records, None)` for a property list, `(None, names)` for a name list.
+
+    records is a list of `(name, type, [value lines])` in file order; keys
+    repeat, so a dict would lose some.
+    """
+    lines = data.decode('latin1').splitlines()
+    records = []
+    i = 0
+    while i < len(lines):
+        head = lines[i].strip()
+        if not head:
+            i += 1
+            continue
+        parts = head.rsplit(' ', 2)
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            return None, [l for l in lines if l.strip()]
+        n = int(parts[2])
+        records.append((parts[0], int(parts[1]), lines[i + 1:i + 1 + n]))
+        i += 1 + n
+    return records, None
+
+
 def _safe(s):
     return ''.join(c if c.isalnum() or c in ' ._-' else '_' for c in s).strip() or '_'
 
@@ -153,6 +204,18 @@ def selftest(path):
     last = order[-1]
     assert last.offset + last.size <= pak.dir_end, (last, pak.dir_end)
     assert pak.find('info.pro') is not None
+
+    # Both .pro shapes parse, and every member of one or the other.
+    props = names = 0
+    for m in pak.members:
+        if not m.name.lower().endswith('.pro'):
+            continue
+        recs, nl = parse_pro(pak.read(m))
+        assert (recs is None) != (nl is None), m.path
+        props += recs is not None
+        names += nl is not None
+    assert props and names, (props, names)
+    print('selftest ok: %d .pro property lists, %d name lists' % (props, names))
     print('selftest ok: %d members in %d directories, tiling %d..%d contiguously'
           % (len(pak.members), pak.dir_count, DATA_START, last.offset + last.size))
 
