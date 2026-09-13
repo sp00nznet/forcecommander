@@ -269,8 +269,14 @@ static const struct { const char* name; import_fn_t fn; } g_real[] = {
     { "GDI32.dll!TextOutA",                imp_TextOutA },
 };
 
+/* crt_shims.c owns the CRT and KERNEL32 half. */
+extern const struct { const char* name; import_fn_t fn; } g_crt_shims[];
+extern const unsigned g_crt_shim_count;
+
 import_fn_t shim_real_import(const char* qualified_name) {
     for (unsigned i = 0; i < sizeof(g_real) / sizeof(g_real[0]); i++)
         if (!strcmp(g_real[i].name, qualified_name)) return g_real[i].fn;
+    for (unsigned i = 0; i < g_crt_shim_count; i++)
+        if (!strcmp(g_crt_shims[i].name, qualified_name)) return g_crt_shims[i].fn;
     return NULL;
 }
