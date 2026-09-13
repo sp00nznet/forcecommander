@@ -55,13 +55,7 @@ uint32_t  g_icall_count = 0;
  * than as an address. --argtrace on the subsystem lookup says which subsystem
  * a line calls; this says which function.
  */
-/* --dumpframe PATH: every DUMP_EVERY lifted-function entries, write the
- * Direct3D render target to PATH.N.bmp and log its non-black pixel count. The
- * game never presents, so this is the only way to tell an empty surface from
- * an unpresented one. */
-#define DUMP_EVERY 4000000u
-static const char* g_dumpframe;
-uint32_t ddraw_dump_target(const char* path);
+void ddraw_set_dumpframe(const char* path);   /* ddraw_shims.c */
 
 #define GET_LIBRARY  0x0052C300u
 #define VIS_RUN_LINE 0x00512170u
@@ -87,15 +81,6 @@ static int g_scripttrace;
  * analysis/rtti.json maps to a class name.
  */
 static void focom_trace_extra(uint32_t va) {
-    if (g_dumpframe) {
-        static unsigned n, seq;
-        if (++n >= DUMP_EVERY) {
-            char path[512];
-            n = 0;
-            snprintf(path, sizeof path, "%s.%u.bmp", g_dumpframe, seq++);
-            ddraw_dump_target(path);
-        }
-    }
     if (!g_scripttrace) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
@@ -130,10 +115,16 @@ static void focom_trace_extra(uint32_t va) {
          * is a class per script function, which rtti.json names. */
         uint32_t inner = obj >= 0x00200000u ? MEM32(obj + 0x20) : 0;
         uint32_t ivt = inner >= 0x00200000u ? MEM32(inner) : 0;
+        /* [entry+8] is the line's argument block and [args+8] the opcode the
+         * subsystem switches on -- GamePPGlobalThread's Execute is a 44-way
+         * jump table on exactly this value, so it says which thread operation
+         * a line is. */
+        uint32_t args = entry ? MEM32(entry + 8) : 0;
+        uint32_t op = args >= 0x00200000u ? MEM32(args + 8) : 0xFFFFFFFFu;
         fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
-                        " fn=%08X vt=%08X ivt=%08X\n",
+                        " fn=%08X vt=%08X ivt=%08X op=%d\n",
                 GetCurrentThreadId(), g_ecx, (int)ln, n,
-                entry ? MEM32(entry) : 0, vt, ivt);
+                entry ? MEM32(entry) : 0, vt, ivt, (int)op);
         return;
     }
     if (va != VIS_RUN_LINE) return;
@@ -208,16 +199,62 @@ import_fn_t ddraw_lookup_method(uint32_t va);
  */
 #define WAITIF_EXEC 0x005D4350u
 int g_nowait = 0;
+int g_waittrace = 0;
 
-static void focom_waitif_false(void) {
+static void focom_waitif_false(void) { RET(0); STDRET(4); }
+
+/*
+ * --waittrace: call the real WaitIf and say what it decided.
+ *
+ * The interesting number is ctx->flags at +0x30 before and after: bit 2 set
+ * means "waiting", and the line at +0x2C is where it will resume. A Wait If
+ * that is evaluated ONCE and never again is the shape of an event-driven wait
+ * -- sub_00506EC0 registers against a queue rather than polling -- so the
+ * question a poll-shaped reading would ask ("why is the condition still true")
+ * is the wrong one; the question is which post never happens.
+ *
+ * recomp_lookup goes to the generated dispatch table, which this override is
+ * not in, so it returns the real body.
+ */
+static void focom_waitif_probe(void) {
     uint32_t ctx = MEM32(g_esp + 8);
-    fprintf(stderr, "[nowait] WaitIf stubbed, ctx=%08X flags=%08X\n",
-            ctx, ctx >= 0x00200000u ? MEM32(ctx + 0x30) : 0);
-    RET(0); STDRET(4);
+    uint32_t ln = ctx >= 0x00200000u ? MEM32(ctx + 0x2C) : 0;
+    uint32_t before = ctx >= 0x00200000u ? MEM32(ctx + 0x30) : 0;
+    recomp_func_t real = recomp_lookup(WAITIF_EXEC);
+    if (!real) { RET(0); STDRET(4); return; }
+    real();
+    uint32_t after = ctx >= 0x00200000u ? MEM32(ctx + 0x30) : 0;
+    fprintf(stderr, "[waitif] ctx=%08X line=%u flags %08X -> %08X resume=%u%s\n",
+            ctx, ln, before, after,
+            ctx >= 0x00200000u ? MEM32(ctx + 0x2C) : 0,
+            (after & 4) ? "  WAITING" : "");
+}
+
+/*
+ * sub_00506EC0 is what WaitIf asks. Its first argument is not a value but an
+ * OBJECT -- the condition expression evaluates to a reference, and the wait is
+ * registered against it (the body calls [obj vtable + 0x78] and then walks the
+ * context's event queue at [ctx+0x24]). So the vtable of that object names the
+ * thing the boot script is waiting for, which is the whole question.
+ */
+#define WAIT_DECIDE 0x00506EC0u
+
+static void focom_waitdecide_probe(void) {
+    uint32_t obj = MEM32(g_esp + 4), cond = MEM32(g_esp + 8);
+    fprintf(stderr, "[waiton] obj=%08X vt=%08X cond=%u ctx=%08X\n",
+            obj, obj >= 0x00200000u ? MEM32(obj) : 0, cond, g_ecx);
+    recomp_func_t real = recomp_lookup(WAIT_DECIDE);
+    if (!real) { RET(0); STDRET(3); return; }
+    real();
+    fprintf(stderr, "[waiton] -> %u\n", g_eax & 0xFFu);
 }
 
 recomp_func_t recomp_lookup_manual(uint32_t va) {
     if (g_nowait && va == WAITIF_EXEC) return (recomp_func_t)focom_waitif_false;
+    if (g_waittrace && va == WAITIF_EXEC)
+        return (recomp_func_t)focom_waitif_probe;
+    if (g_waittrace && va == WAIT_DECIDE)
+        return (recomp_func_t)focom_waitdecide_probe;
     return (recomp_func_t)ddraw_lookup_method(va);
 }
 
@@ -387,10 +424,31 @@ uint32_t host_create_window(const char* title) {
     return (uint32_t)(uintptr_t)g_hwnd;
 }
 
+/*
+ * Blit straight to the window, rather than invalidating and calling
+ * UpdateWindow.
+ *
+ * UpdateWindow sends WM_PAINT, and SendMessage to a window owned by ANOTHER
+ * thread blocks until that thread pumps. The game's renderer runs on a Ronin
+ * worker and the window belongs to the main thread, which at that moment is
+ * inside its own wait -- so the first Flip the game ever issued hung the
+ * process, and the watchdog reported "no lifted call for 90 s" with
+ * CDD7FSScreen::Present at the top of the entry trace.
+ *
+ * GetDC/BitBlt/ReleaseDC on another thread's window is allowed and does not
+ * wait for anybody. WM_PAINT still repaints from the same DIB on expose.
+ *
+ * ponytail: no lock around g_memdc, so a WM_PAINT on the main thread can blit
+ * from it while a worker blits from it too. Both are reads of the same bits
+ * and the worst case is one torn frame. Add a critical section if tearing ever
+ * matters more than the frame rate.
+ */
 void host_present(void) {
     if (!g_hwnd) return;
-    InvalidateRect(g_hwnd, NULL, FALSE);
-    UpdateWindow(g_hwnd);
+    HDC dc = GetDC(g_hwnd);
+    if (!dc) return;
+    BitBlt(dc, 0, 0, g_w, g_h, g_memdc, 0, 0, SRCCOPY);
+    ReleaseDC(g_hwnd, dc);
 }
 
 int host_pump(void) {
@@ -585,8 +643,9 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc)
             g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--dumpframe") && i + 1 < argc)
-            g_dumpframe = argv[++i];
+            ddraw_set_dumpframe(argv[++i]);
         else if (!strcmp(argv[i], "--nowait")) g_nowait = 1;
+        else if (!strcmp(argv[i], "--waittrace")) g_waittrace = 1;
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;

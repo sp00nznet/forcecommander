@@ -173,6 +173,13 @@ static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
  * the software path, which is what the era and RE3D's Bl16 chunk both say, so
  * the conversion lives here rather than asking the game to change format.
  */
+/* --dumpframe PATH: write the first DUMP_PRESENTS frames the game presents to
+ * PATH.N.bmp. See ddraw_dump_surface. */
+#define DUMP_PRESENTS 5
+static const char* g_dump_path;
+void ddraw_set_dumpframe(const char* p) { g_dump_path = p; }
+uint32_t ddraw_dump_surface(uint32_t s, const char* path);
+
 static void present_surface(uint32_t s) {
     if (!s || !O_BITS(s)) return;
     uint32_t* dst = (uint32_t*)host_surface();
@@ -212,6 +219,23 @@ static void present_surface(uint32_t s) {
             for (int x = 0; x < w; x++)
                 d[x] = (uint32_t)(src[x] * 0x010101u);
         }
+    }
+    /* The first few presents say whether the frame has anything in it. A black
+     * window and no window at all look the same from a log. */
+    static unsigned np;
+    if (np < DUMP_PRESENTS) {
+        uint32_t nz = 0;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (dst[(size_t)y * hw + x] & 0xFFFFFFu) nz++;
+        fprintf(stderr, "[present] #%u surface 0x%08X %dx%d: %u of %d pixels"
+                        " non-black\n", np + 1, s, w, h, nz, w * h);
+        if (g_dump_path) {
+            char path[512];
+            snprintf(path, sizeof path, "%s.%u.bmp", g_dump_path, np);
+            ddraw_dump_surface(s, path);
+        }
+        np++;
     }
     host_present();
 }
@@ -616,7 +640,10 @@ static void sf_Unlock(void) {
  * This is a diagnostic, not a fix. The real present has to come from the game.
  */
 uint32_t ddraw_dump_target(const char* path) {
-    uint32_t s = g_d3d_rt ? g_d3d_rt : g_primary;
+    return ddraw_dump_surface(g_d3d_rt ? g_d3d_rt : g_primary, path);
+}
+
+uint32_t ddraw_dump_surface(uint32_t s, const char* path) {
     if (!s || !O_BITS(s)) {
         fprintf(stderr, "[dump] nothing to dump (rt=0x%08X primary=0x%08X)\n",
                 g_d3d_rt, g_primary);
@@ -1824,9 +1851,82 @@ static void d3d_CreateDevice(void) {
     RET(DD_OK); STDRET(4);
 }
 
+/* ------------------------------------------------- IDirect3DVertexBuffer7
+ *
+ * Nine methods, and the game reaches Lock on the first frame it renders.
+ * It used to get a generic object whose slots abort, and slot 3 is Lock.
+ *
+ * D3DVERTEXBUFFERDESC is {dwSize, dwCaps, dwFVF, dwNumVertices}. The stride
+ * that FVF implies is deliberately not computed: the buffer is only ever
+ * written by the game and read back by DrawPrimitiveVB, so 64 bytes a vertex
+ * is larger than any FVF DX7 can express and nothing needs the exact figure.
+ *
+ * ponytail: no vertex processing. ProcessVertices and ProcessVerticesStrided
+ * accept and succeed without transforming anything -- they are the hardware
+ * T&L path, and nothing is rasterised yet anyway. Compute the stride and do
+ * the transform when there is a rasteriser to feed.
+ */
+#define VB_SLOTS  9
+#define VB_STRIDE 64u
+#define VB_NVERT(o) MEM32((o) + 0x10)        /* reuse the surface height slot */
+#define VB_FVF(o)   MEM32((o) + 0x14)        /* ...the bpp slot */
+#define VB_BYTES(o) MEM32((o) + 0x0C)        /* ...the width slot */
+#define VB_DATA(o)  MEM32((o) + 0x1C)        /* ...the pixel-buffer slot */
+
+static uint32_t g_vtbl_vbuf;
+
+static void vb_Lock(void) {
+    uint32_t o = ARG(0), out = ARG(2), sz = ARG(3);
+    if (out) MEM32(out) = VB_DATA(o);
+    if (sz) MEM32(sz) = VB_BYTES(o);
+    RET(VB_DATA(o) ? DD_OK : DDERR_INVALIDPARAMS); STDRET(4);
+}
+
+static void vb_GetVertexBufferDesc(void) {
+    uint32_t o = ARG(0), d = ARG(1);
+    if (!d) { RET(DDERR_INVALIDPARAMS); STDRET(2); return; }
+    MEM32(d + 0) = 16;
+    MEM32(d + 4) = 0;
+    MEM32(d + 8) = VB_FVF(o);
+    MEM32(d + 12) = VB_NVERT(o);
+    RET(DD_OK); STDRET(2);
+}
+
+static void vb_ProcessVertices(void) { RET(DD_OK); STDRET(8); }
+
+static void vbuf_init(void) {
+    if (!g_vtbl_generic) generic_init();
+    uint32_t v = crt_alloc(VB_SLOTS * 4);
+    static const vtent_t vb[VB_SLOTS] = {
+        {m_QueryInterface,        "VertexBuffer::QueryInterface"},
+        {m_AddRef,                "VertexBuffer::AddRef"},
+        {m_Release,               "VertexBuffer::Release"},
+        {vb_Lock,                 "VertexBuffer::Lock"},
+        {sf_ok1,                  "VertexBuffer::Unlock"},
+        {vb_ProcessVertices,      "VertexBuffer::ProcessVertices"},
+        {vb_GetVertexBufferDesc,  "VertexBuffer::GetVertexBufferDesc"},
+        {sf_ok3,                  "VertexBuffer::Optimize"},
+        {vb_ProcessVertices,      "VertexBuffer::ProcessVerticesStrided"},
+    };
+    for (unsigned i = 0; i < VB_SLOTS; i++)
+        MEM32(v + i * 4) = method(vb[i].fn, vb[i].nm);
+    g_vtbl_vbuf = v;
+}
+
 static void d3d_CreateVertexBuffer(void) {
-    uint32_t o = obj_new(g_vtbl_generic ? g_vtbl_generic : g_vtbl_dd, KIND_DD);
-    if (ARG(2)) MEM32(ARG(2)) = o;
+    uint32_t d = ARG(1), out = ARG(2);
+    if (!g_vtbl_vbuf) vbuf_init();
+    uint32_t o = obj_new(g_vtbl_vbuf, KIND_DD);
+    uint32_t n = d ? MEM32(d + 12) : 0, fvf = d ? MEM32(d + 8) : 0;
+    if (!n) n = 1;
+    VB_NVERT(o) = n;
+    VB_FVF(o) = fvf;
+    VB_BYTES(o) = n * VB_STRIDE;
+    VB_DATA(o) = crt_alloc(n * VB_STRIDE);
+    if (VB_DATA(o)) memset((void*)(uintptr_t)ADDR(VB_DATA(o)), 0, n * VB_STRIDE);
+    fprintf(stderr, "[d3d] CreateVertexBuffer %u vertices fvf=0x%X -> 0x%08X\n",
+            n, fvf, o);
+    if (out) MEM32(out) = o;
     RET(DD_OK); STDRET(4);
 }
 

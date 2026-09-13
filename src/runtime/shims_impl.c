@@ -685,13 +685,47 @@ static void u32_DispatchMessageA(void) {
     RET((uint32_t)(int32_t)DispatchMessageA(&m)); STDRET(1);
     { static unsigned n; if (n++ < 4) fprintf(stderr, "[user32] DispatchMessageA #%u msg 0x%04X\n", n, m.message); }
 }
+extern unsigned g_wait_scale;      /* --waitscale, crt_shims.c */
+
+/*
+ * MsgWaitForMultipleObjects, and the reason the game's first section ended.
+ *
+ * This used to pass nCount = 0 and no handle array -- "with no real worker
+ * threads there is nothing else to wait on" -- and to read the timeout from
+ * ARG(2), which is bWaitAll, not dwMilliseconds. Both were wrong, and the
+ * first one wrong in the worst possible way, because the return value is a
+ * position in the handle array:
+ *
+ *     WAIT_OBJECT_0 + n   a message arrived
+ *     WAIT_OBJECT_0 + i   handle i signalled
+ *     WAIT_TIMEOUT        neither
+ *
+ * With nCount = 0 "a message arrived" comes back as WAIT_OBJECT_0 + 0, which
+ * is exactly what "handle 0 signalled" looks like. And handle 0, for every
+ * Ronin thread, is its stop event: sub_00550F60 ticks the thread on
+ * WAIT_TIMEOUT, pumps messages on anything else non-zero, and on plain zero
+ * returns false, which its caller answers by clearing [thread+0xC] and
+ * retiring the thread -- and a boot process lives exactly as long as its boot
+ * thread. So the first stray mouse move ended the section, and the number of
+ * frames it survived first (61, 68, 164 in different runs) was just how long it
+ * took one message to arrive.
+ *
+ * Arguments are sampled before the machine is released -- see BLOCKING -- and
+ * the handle array is copied, because MEM32 reads target memory that another
+ * thread may be inside.
+ */
 static void u32_MsgWaitForMultipleObjects(void) {
-    /* The game uses this to idle until input or a handle signals. With no real
-     * worker threads there is nothing else to wait on, so honour the timeout
-     * against the message queue only. */
-    /* Arguments sampled before the machine is released -- see BLOCKING. */
-    uint32_t r = 0, ms = ARG(2), flags = ARG(4);
-    BLOCKING(r = (uint32_t)MsgWaitForMultipleObjects(0, NULL, FALSE, ms, flags));
+    uint32_t n = ARG(0), pv = ARG(1), all = ARG(2), ms = ARG(3), flags = ARG(4);
+    HANDLE h[MAXIMUM_WAIT_OBJECTS];
+    if (n > MAXIMUM_WAIT_OBJECTS) n = MAXIMUM_WAIT_OBJECTS;
+    for (uint32_t i = 0; i < n; i++) h[i] = i2h(MEM32(pv + i * 4));
+    if (ms != INFINITE) {
+        uint64_t scaled = (uint64_t)ms * g_wait_scale;
+        ms = scaled > 0x7FFFFFFFu ? 0x7FFFFFFFu : (uint32_t)scaled;
+    }
+    uint32_t r = 0;
+    BLOCKING(r = (uint32_t)MsgWaitForMultipleObjects(n, n ? h : NULL,
+                                                    (BOOL)all, ms, flags));
     RET(r); STDRET(5);
 }
 static void u32_PostThreadMessageA(void) {
