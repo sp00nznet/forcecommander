@@ -37,8 +37,25 @@ uint32_t  g_cur_func = 0;
 uint32_t  g_icall_trace[ICALL_TRACE_SIZE] = {0};
 uint32_t  g_icall_trace_idx = 0;
 uint32_t  g_icall_count = 0;
+#ifdef RECOMP_TRACE
 uint32_t  g_enter_trace[RECOMP_ENTER_SIZE] = {0};
 uint32_t  g_enter_idx = 0;
+void recomp_trace_enter(uint32_t va) {
+    g_enter_trace[g_enter_idx & (RECOMP_ENTER_SIZE - 1)] = va;
+    g_enter_idx++;
+}
+#endif
+void recomp_dump_trace(const char* why) {
+#ifdef RECOMP_TRACE
+    fprintf(stderr, "=== entry trace (%s) ===\n", why ? why : "");
+    for (int i = 32; i > 0; i--) {
+        uint32_t idx = (g_enter_idx - i) & (RECOMP_ENTER_SIZE - 1);
+        if (g_enter_trace[idx]) fprintf(stderr, "  0x%08X\n", g_enter_trace[idx]);
+    }
+#else
+    (void)why;
+#endif
+}
 
 /* Target memory layout, from pe_analyze on Focom.exe. */
 #define FOCOM_IMAGE_BASE  0x00400000u
@@ -55,8 +72,8 @@ recomp_func_t recomp_lookup(uint32_t va) {
     uint32_t lo = 0, hi = recomp_dispatch_count;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2;
-        uint32_t m = recomp_dispatch_table[mid].va;
-        if (m == va) return recomp_dispatch_table[mid].fn;
+        uint32_t m = recomp_dispatch_table[mid].address;
+        if (m == va) return recomp_dispatch_table[mid].func;
         if (m < va) lo = mid + 1; else hi = mid;
     }
     return NULL;

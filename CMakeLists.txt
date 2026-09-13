@@ -51,7 +51,8 @@ else()
   # Generated code trips a lot of benign warnings; the signal is in the lift
   # errors run_lift.py counts, not here.
   target_compile_options(focom PRIVATE
-    -w -fno-strict-aliasing -fwrapv -mno-sse
+    # NOT -mno-sse: mingw's windows.h uses __builtin_ia32_sfence.
+    -w -fno-strict-aliasing -fwrapv
     -Wno-unused-label -Wno-unused-variable)
 endif()
 
