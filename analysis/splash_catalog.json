@@ -1,0 +1,35 @@
+{
+ "exe": "Focom.exe",
+ "image_base": 4194304,
+ "code_start": 4198400,
+ "code_end": 8142848,
+ "stats": {
+  "coverage_pct": 0.0
+ },
+ "functions": [
+  {
+   "address": 4200304,
+   "end": 4200857,
+   "name": "sub_00401770",
+   "size": 553,
+   "calls_to": [
+    5696304
+   ],
+   "is_thunk": false,
+   "entry_kind": "start",
+   "num_instructions": 0,
+   "num_blocks": 0
+  },
+  {
+   "address": 5696304,
+   "end": 5696351,
+   "name": "sub_0056EB30",
+   "size": 47,
+   "calls_to": [],
+   "is_thunk": false,
+   "entry_kind": "start",
+   "num_instructions": 0,
+   "num_blocks": 0
+  }
+ ]
+}

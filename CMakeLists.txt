@@ -23,6 +23,7 @@ endif()
 add_executable(focom
   src/runtime/recomp_runtime.c
   src/runtime/imports_gen.c
+  src/runtime/shims_impl.c
   ${CMAKE_SOURCE_DIR}/../tools/runtime/recomp32/image_loader.c
   ${GEN_SOURCES}
 )

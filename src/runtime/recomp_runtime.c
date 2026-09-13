@@ -81,9 +81,29 @@ recomp_func_t recomp_lookup(uint32_t va) {
 
 recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }
 
+/* A hand-written shim (shims_impl.c) beats the generated stub. Resolved once
+ * per IAT slot and cached, because this is on the indirect-call path. */
+import_fn_t shim_real_import(const char* qualified_name);
+
+static import_fn_t g_resolved[512];
+static int g_resolved_done = 0;
+
+static void resolve_imports(void) {
+    unsigned real = 0;
+    for (unsigned i = 0; i < g_import_count && i < 512; i++) {
+        import_fn_t f = shim_real_import(g_imports[i].name);
+        g_resolved[i] = f ? f : g_imports[i].fn;
+        if (f) real++;
+    }
+    g_resolved_done = 1;
+    printf("  real shims installed:         %u\n", real);
+}
+
 recomp_func_t recomp_lookup_import(uint32_t va) {
+    if (!g_resolved_done) resolve_imports();
     for (unsigned i = 0; i < g_import_count; i++)
-        if (g_imports[i].iat_va == va) return g_imports[i].fn;
+        if (g_imports[i].iat_va == va)
+            return (i < 512) ? g_resolved[i] : g_imports[i].fn;
     return NULL;
 }
 
@@ -108,16 +128,48 @@ static HBITMAP g_dib;
 static void*   g_dibbits;
 static int     g_w = 640, g_h = 480;
 
+/*
+ * The splash screen is a dialog, and its whole appearance lives in the game's
+ * own dialog procedure at 0x00401770: WM_INITDIALOG loads BITMAP 102,
+ * WM_PAINT StretchBlts it and draws the window title over it twice for a drop
+ * shadow. So the host provides the window and forwards messages into the
+ * lifted procedure -- the pixels are the game's code, not ours.
+ */
+#define FOCOM_SPLASH_DLGPROC 0x00401770u
+
+uint32_t h2i(HANDLE h);
+uint32_t call_lifted_stdcall4(recomp_func_t f, uint32_t a, uint32_t b,
+                              uint32_t c, uint32_t d);
+
+static int g_use_lifted_paint = 0;
+
+static int forward_to_lifted(HWND h, UINT m, WPARAM w, LPARAM l, uint32_t* out) {
+    if (!g_use_lifted_paint) return 0;
+    recomp_func_t f = recomp_lookup(FOCOM_SPLASH_DLGPROC);
+    if (!f) return 0;
+    uint32_t save_esp = g_esp;
+    *out = call_lifted_stdcall4(f, h2i(h), m, (uint32_t)w, (uint32_t)l);
+    if (g_esp != save_esp) {
+        fprintf(stderr, "[stack] dlgproc msg 0x%04X left esp at 0x%08X, "
+                        "expected 0x%08X\n", m, g_esp, save_esp);
+        g_esp = save_esp;
+    }
+    return 1;
+}
+
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    uint32_t r = 0;
     switch (m) {
     case WM_CLOSE: PostQuitMessage(0); return 0;
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC dc = BeginPaint(h, &ps);
-        if (g_memdc) BitBlt(dc, 0, 0, g_w, g_h, g_memdc, 0, 0, SRCCOPY);
-        EndPaint(h, &ps);
+    case WM_PAINT:
+        if (forward_to_lifted(h, m, w, l, &r)) return 0;
+        {
+            PAINTSTRUCT ps;
+            HDC dc = BeginPaint(h, &ps);
+            if (g_memdc) BitBlt(dc, 0, 0, g_w, g_h, g_memdc, 0, 0, SRCCOPY);
+            EndPaint(h, &ps);
+        }
         return 0;
-    }
     default: break;
     }
     return DefWindowProcA(h, m, w, l);
@@ -134,11 +186,26 @@ uint32_t host_create_window(const char* title) {
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     RegisterClassA(&wc);
 
-    RECT r = {0, 0, g_w, g_h};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    /*
+     * WS_POPUP at (0,0), client area exactly the bitmap size -- and that is not
+     * cosmetic. The splash paint code does:
+     *
+     *     GetWindowRect(hwnd, &rc);
+     *     StretchBlt(dst, 0, 0, rc.right, rc.bottom, src, 0, 0, 640, 480, SRCCOPY);
+     *
+     * It passes right/bottom straight in as the destination width and height,
+     * which is only correct for a window whose rect starts at (0,0) -- and the
+     * game's own setup guarantees that, positioning the splash full-screen at
+     * the origin via GetSystemMetrics + SetWindowPos. With the window anywhere
+     * else, right/bottom are screen coordinates: at CW_USEDEFAULT this asked
+     * for an 812x675 stretch of a 640x480 bitmap into a 640x480 client area,
+     * so the picture came out zoomed and cropped to its top-left corner.
+     *
+     * A border would break it too, since AdjustWindowRect pushes the client
+     * origin off (0,0) while the game still measures the whole window.
+     */
     g_hwnd = CreateWindowExA(0, wc.lpszClassName, title ? title : "Force Commander (recomp)",
-                             WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             r.right - r.left, r.bottom - r.top,
+                             WS_POPUP, 0, 0, g_w, g_h,
                              NULL, NULL, wc.hInstance, NULL);
     if (!g_hwnd) return 0;
 
@@ -179,6 +246,46 @@ void* host_surface(void) { return g_dibbits; }
 int   host_width(void)   { return g_w; }
 int   host_height(void)  { return g_h; }
 
+/* Grab the window's client area to a BMP, so a render can be checked without
+ * a person watching. The reference to compare against is BITMAP 102 pulled
+ * straight out of the exe by tools/pe/rsrc.py. */
+void host_screenshot(const char* path) {
+    if (!g_hwnd || !path) return;
+    HDC win = GetDC(g_hwnd);
+    HDC mem = CreateCompatibleDC(win);
+    BITMAPINFO bi = {0};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = g_w;
+    bi.bmiHeader.biHeight = -g_h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = NULL;
+    HBITMAP bm = CreateDIBSection(win, &bi, DIB_RGB_COLORS, &bits, NULL, 0);
+    HGDIOBJ old = SelectObject(mem, bm);
+    BitBlt(mem, 0, 0, g_w, g_h, win, 0, 0, SRCCOPY);
+    SelectObject(mem, old);
+
+    uint32_t px = (uint32_t)g_w * g_h * 4;
+    uint8_t fh[14] = {'B', 'M'};
+    uint32_t fsz = 14 + 40 + px, off = 14 + 40;
+    memcpy(fh + 2, &fsz, 4);
+    memcpy(fh + 10, &off, 4);
+    BITMAPINFOHEADER h = bi.bmiHeader;
+    h.biHeight = -g_h;
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        fwrite(fh, 1, 14, f);
+        fwrite(&h, 1, 40, f);
+        fwrite(bits, 1, px, f);
+        fclose(f);
+        printf("  screenshot -> %s (%dx%d)\n", path, g_w, g_h);
+    }
+    DeleteObject(bm);
+    DeleteDC(mem);
+    ReleaseDC(g_hwnd, win);
+}
+
 /* ---------------------------------------------------------------- crash */
 
 static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
@@ -201,8 +308,15 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
 
 int main(int argc, char** argv) {
     const char* exe = (argc > 1) ? argv[1] : "game/Focom.exe";
-    int run = 0;
-    for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--run")) run = 1;
+    int run = 0, splash = 0, shot = 0;
+    const char* shot_path = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--run")) run = 1;
+        else if (!strcmp(argv[i], "--splash")) splash = 1;
+        else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
+            shot = 1; shot_path = argv[++i];
+        }
+    }
 
     AddVectoredExceptionHandler(1, veh);
 
@@ -228,9 +342,54 @@ int main(int argc, char** argv) {
     g_esp = FOCOM_STACK_TOP - 0x100;
     printf("  stack 0x%08X heap 0x%08X\n", g_esp, FOCOM_HEAP_BASE);
 
+    /*
+     * Populate the IAT. The lifter turns `call dword ptr [0x7C3408]` into
+     * RECOMP_ICALL(MEM32(0x7C3408)) -- it calls the slot's *contents*, which is
+     * what the instruction does. No Windows loader ran over this image, so
+     * those slots still hold their on-disk values (hint/name-table RVAs), and
+     * calling one lands on a meaningless address.
+     *
+     * Writing each slot's own VA into itself makes the contents and the
+     * address the same number, so recomp_lookup_import resolves either way.
+     */
+    for (unsigned i = 0; i < g_import_count; i++)
+        MEM32(g_imports[i].iat_va) = g_imports[i].iat_va;
+    printf("  IAT slots self-patched:       %u\n", g_import_count);
+
+    if (splash) {
+        /*
+         * Drive the game's own splash dialog procedure, which is the smallest
+         * thing in this binary that produces a picture: the host owns the
+         * window, the lifted code at 0x00401770 owns every pixel in it.
+         */
+        recomp_func_t dp = recomp_lookup(FOCOM_SPLASH_DLGPROC);
+        if (!dp) {
+            fprintf(stderr, "0x%08X is not in the dispatch table -- lift it first:\n"
+                    "  py -3 run_lift.py --catalog analysis/splash_catalog.json "
+                    "--roots 0x%08X\n", FOCOM_SPLASH_DLGPROC, FOCOM_SPLASH_DLGPROC);
+            return 2;
+        }
+        /* The window title is what the dialog proc draws over the bitmap. */
+        host_create_window("STAR WARS: Force Commander");
+        g_use_lifted_paint = 1;
+
+        printf("\n  WM_INITDIALOG -> lifted 0x%08X\n", FOCOM_SPLASH_DLGPROC);
+        fflush(stdout);
+        uint32_t r = 0;
+        forward_to_lifted(g_hwnd, WM_INITDIALOG, 0, 0, &r);
+        printf("  returned %u\n", r);
+
+        host_present();
+        for (int i = 0; i < 120 && host_pump(); i++) Sleep(16);
+        if (shot) host_screenshot(shot_path);
+        while (host_pump()) Sleep(16);
+        return 0;
+    }
+
     if (!run) {
         printf("\n(dry run: image mapped, machine initialised, nothing executed)\n"
-               "pass --run to execute the entry point\n");
+               "pass --run to execute the entry point, or --splash to drive the\n"
+               "game's own splash dialog procedure\n");
         return 0;
     }
 

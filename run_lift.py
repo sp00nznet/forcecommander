@@ -46,7 +46,14 @@ CATALOG = os.path.join(_HERE, 'analysis', 'functions.json')
 OUT = os.path.join(_HERE, 'src', 'recomp', 'gen')
 
 # Imports whose body is hand-written in shims_impl.c rather than lifted.
-HOST_SHIM = set()
+HOST_SHIM = {
+    # MSVC __chkstk / _alloca_probe. It walks the frame touching guard pages,
+    # then returns by moving the return address to the new stack top and doing
+    # `push eax; ret`. Lifting that faithfully means modelling a return through
+    # a relocated return address; the semantics are simply "allocate EAX bytes
+    # of frame", so the shim in shims_impl.c does exactly that.
+    0x0056EB30,
+}
 
 
 def closure(funcs, roots, limit):
