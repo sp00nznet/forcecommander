@@ -1,0 +1,43 @@
+================================================================================
+PE CATALOG: forcecommander/game  (5 binaries)
+================================================================================
+
+================================================================================
+  APP
+================================================================================
+
+  [Focom.exe]  4,943,872 bytes
+  SHA1: 69b4f96bad4f3236e4f818f9d68da1aea2633e60
+  PE32 EXE (x86), GUI, linker 6.0, built 2000-03-03 04:45:32 UTC
+  imports: KERNEL32.dll, USER32.dll, GDI32.dll, MSVCP60.dll, MSVCRT.dll, WINMM.dll, ADVAPI32.dll, SHELL32.dll, ole32.dll, mss32.dll, DINPUT.dll
+
+  [Force.exe]  106,496 bytes
+  SHA1: 7f5c8d4928cfcbcaa3ddad635d58e939de6dd4aa
+  PE32 EXE (x86), GUI, linker 6.0, built 2000-02-29 17:35:23 UTC
+  imports: KERNEL32.dll, USER32.dll, GDI32.dll, ADVAPI32.dll, SHELL32.dll, WINMM.dll, COMCTL32.dll
+
+================================================================================
+  PLUGIN/LIB
+================================================================================
+
+  [Smush.dll]  147,456 bytes
+  SHA1: 234aeaefe3c5afc0c6efa9fdffea686ed222d11d
+  PE32 DLL (x86), GUI, linker 6.0, built 1999-02-27 02:09:00 UTC
+  exports:4
+  imports: WINMM.dll, DSOUND.dll, KERNEL32.dll
+
+  [mss32.dll]  328,704 bytes
+  SHA1: f88c69caaa327b0273900ddd8ecf3e7d053125f2
+  PE32 DLL (x86), GUI, linker 5.2, built 1999-01-04 18:55:00 UTC
+  exports:200
+  imports: KERNEL32.dll, USER32.dll, WINMM.dll
+
+================================================================================
+  INSTALLER
+================================================================================
+
+  [FocomSetup.dll]  843,776 bytes
+  SHA1: 1198310b8de2cd5ebb5f7d008790cab773c7fc03
+  PE32 DLL (x86), GUI, linker 6.0, built 2000-02-29 03:32:59 UTC
+  exports:4
+  imports: KERNEL32.dll, USER32.dll, GDI32.dll, WINSPOOL.DRV, ADVAPI32.dll, COMCTL32.dll, ole32.dll
