@@ -22,6 +22,16 @@
 #include "recomp_types.h"
 #include "imports.h"
 
+uint32_t crt_alloc(uint32_t n);   /* crt_shims.c */
+extern int g_shim_trace;   /* --trace */
+
+/* The machine lock, defined with the thread support further down. Declared
+ * here because the blocking USER32 shims come first in this file. */
+void mach_enter(void);
+void mach_leave(void);
+int  mach_depth(void);
+#define BLOCKING(expr) do { mach_leave(); (expr); mach_enter(); } while (0)
+
 /* ---------------------------------------------------------- handle table */
 
 #define HT_MAX 256
@@ -293,7 +303,20 @@ static void imp_TextOutA(void) {
  */
 #define MSG32_SIZE 28
 
-static struct { HWND h; uint32_t proc; } g_winproc[64];
+/*
+ * Per window: the lifted procedure, and the style the GAME asked for.
+ *
+ * The host window is deliberately not created with that style -- a WS_POPUP
+ * full-screen window sits at the origin on top of everything, which is not
+ * what anyone wants out of a bring-up. But the game reads its own style back
+ * with GetWindowLongA(GWL_STYLE) and branches on it, and handing it the
+ * windowed style we substituted sent it down a path that dereferenced 0.
+ *
+ * So it is told what it asked for. This is the same bargain imp_GetWindowRect
+ * already makes: the window the game believes it has is full-screen at the
+ * origin, and the one on screen is an ordinary titled window.
+ */
+static struct { HWND h; uint32_t proc, style, ex_style; } g_winproc[64];
 static unsigned g_winproc_n = 0;
 
 static uint32_t win_target_proc(HWND h) {
@@ -306,6 +329,22 @@ static void win_bind(HWND h, uint32_t proc) {
         if (g_winproc[i].h == h) { g_winproc[i].proc = proc; return; }
     if (g_winproc_n < 64) { g_winproc[g_winproc_n].h = h;
                             g_winproc[g_winproc_n++].proc = proc; }
+}
+
+static void win_bind_style(HWND h, uint32_t style, uint32_t ex_style) {
+    for (unsigned i = 0; i < g_winproc_n; i++)
+        if (g_winproc[i].h == h) {
+            g_winproc[i].style = style;
+            g_winproc[i].ex_style = ex_style;
+            return;
+        }
+}
+/* The style the game set, or 0 if this window is not one of its own. */
+static uint32_t win_style(HWND h, int ex) {
+    for (unsigned i = 0; i < g_winproc_n; i++)
+        if (g_winproc[i].h == h)
+            return ex ? g_winproc[i].ex_style : g_winproc[i].style;
+    return 0;
 }
 
 /* The class name -> target procedure map, filled by RegisterClass(Ex)A and read
@@ -327,6 +366,58 @@ static uint32_t class_proc(const char* name) {
     return 0;
 }
 
+/*
+ * Messages whose lParam is a POINTER cannot be passed through.
+ *
+ * WM_NCCREATE and WM_CREATE carry a CREATESTRUCTA*, and it is a HOST pointer --
+ * truncating it to 32 bits and handing it to the game gave its window procedure
+ * 0x953FD330 to dereference. Nothing from the host address space may be visible
+ * to the target; this is the same rule that WIN32_FIND_DATAA broke.
+ *
+ * CREATESTRUCTA in the 32-bit ABI is twelve dwords:
+ *   +00 lpCreateParams  +04 hInstance  +08 hMenu    +0C hwndParent
+ *   +10 cy              +14 cx         +18 y        +1C x
+ *   +20 style           +24 lpszName   +28 lpszClass +2C dwExStyle
+ *
+ * The two string fields are the interesting part: the game passed those
+ * pointers INTO CreateWindowExA as target addresses, so the originals are what
+ * belong here, not the host copies Windows echoes back. They are kept aside at
+ * the call.
+ */
+static struct {
+    uint32_t name, cls, params, style, ex_style;
+} g_pending_create;
+
+/*
+ * The translation has to work in BOTH directions. A window procedure normally
+ * ends by handing the message to DefWindowProcA unchanged -- including the
+ * lParam it was given, which is now the target CREATESTRUCT. Passing that on
+ * had USER32 dereference 0xFFFFFFFF903FD710, our own buffer address
+ * sign-extended. So the pairing is remembered for the duration of the message
+ * and undone on the way back out.
+ */
+static LPARAM   g_msg_host_lp;
+static uint32_t g_msg_target_lp;
+
+static uint32_t create_struct_to_target(const CREATESTRUCTA* cs) {
+    static uint32_t buf;                 /* one window at a time is created */
+    if (!buf) buf = crt_alloc(0x30);
+    if (!buf) return 0;
+    MEM32(buf + 0x00) = g_pending_create.params;
+    MEM32(buf + 0x04) = 0x00400000u;                  /* hInstance: the image */
+    MEM32(buf + 0x08) = h2i(cs->hMenu);
+    MEM32(buf + 0x0C) = h2i(cs->hwndParent);
+    MEM32(buf + 0x10) = (uint32_t)cs->cy;
+    MEM32(buf + 0x14) = (uint32_t)cs->cx;
+    MEM32(buf + 0x18) = (uint32_t)cs->y;
+    MEM32(buf + 0x1C) = (uint32_t)cs->x;
+    MEM32(buf + 0x20) = g_pending_create.style;
+    MEM32(buf + 0x24) = g_pending_create.name;
+    MEM32(buf + 0x28) = g_pending_create.cls;
+    MEM32(buf + 0x2C) = g_pending_create.ex_style;
+    return buf;
+}
+
 static LRESULT CALLBACK win_trampoline(HWND h, UINT m, WPARAM w, LPARAM l) {
     uint32_t va = win_target_proc(h);
     if (!va && m == WM_NCCREATE) {
@@ -341,14 +432,28 @@ static LRESULT CALLBACK win_trampoline(HWND h, UINT m, WPARAM w, LPARAM l) {
     recomp_func_t f = va ? recomp_lookup(va) : NULL;
     if (!f) return DefWindowProcA(h, m, w, l);
 
+    /* Windows can call this back while the machine is released (a message
+     * dispatched from inside GetMessageA, or host_pump after the entry point
+     * returned), so the trampoline claims it. Nested claims are free. */
+    mach_enter();
+    uint32_t lp = (uint32_t)l;
+    if ((m == WM_NCCREATE || m == WM_CREATE) && l)
+        lp = create_struct_to_target((const CREATESTRUCTA*)l);
+    LPARAM   save_host_lp = g_msg_host_lp;
+    uint32_t save_target_lp = g_msg_target_lp;
+    g_msg_host_lp = l;
+    g_msg_target_lp = lp;
     uint32_t save_esp = g_esp, save_fn = g_cur_func;
-    uint32_t r = call_lifted_stdcall4(f, h2i(h), m, (uint32_t)w, (uint32_t)l);
+    uint32_t r = call_lifted_stdcall4(f, h2i(h), m, (uint32_t)w, lp);
     g_cur_func = save_fn;
     if (g_esp != save_esp) {
         fprintf(stderr, "[user32] wndproc 0x%08X msg 0x%04X left esp at "
                         "0x%08X, expected 0x%08X\n", va, m, g_esp, save_esp);
         g_esp = save_esp;
     }
+    g_msg_host_lp = save_host_lp;
+    g_msg_target_lp = save_target_lp;
+    mach_leave();
     return (LRESULT)(int32_t)r;
 }
 
@@ -368,7 +473,8 @@ static void u32_RegisterClassA(void) {
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = name;
-    fprintf(stderr, "[user32] RegisterClassA(\"%s\") proc=0x%08X\n",
+    if (g_shim_trace)
+        fprintf(stderr, "[user32] RegisterClassA(\"%s\") proc=0x%08X\n",
             name, MEM32(c + 4));
     RET((uint32_t)RegisterClassA(&wc)); STDRET(1);
 }
@@ -400,6 +506,14 @@ static void u32_CreateWindowExA(void) {
      * the style is forced to an ordinary titled window, the same decision
      * host_create_window() already made for the splash. */
     DWORD style = (ARG(3) & ~(DWORD)WS_POPUP) | WS_OVERLAPPEDWINDOW;
+    /* Kept for the CREATESTRUCT the game's own procedure is about to be
+     * handed: these are target addresses, and Windows would echo back host
+     * copies of the strings. */
+    g_pending_create.ex_style = ARG(0);
+    g_pending_create.cls = ARG(1);
+    g_pending_create.name = ARG(2);
+    g_pending_create.style = ARG(3);
+    g_pending_create.params = ARG(11);
     HWND h = CreateWindowExA(ARG(0), cls, title, style,
                              (int)ARG(4), (int)ARG(5), (int)ARG(6), (int)ARG(7),
                              ARG(8) ? i2h(ARG(8)) : NULL, NULL,
@@ -409,11 +523,17 @@ static void u32_CreateWindowExA(void) {
     if (!h) { RET(0); STDRET(12); return; }
     uint32_t proc = class_proc(cls);
     if (proc) win_bind(h, proc);
+    else win_bind(h, 0);                 /* still record it, for the style */
+    win_bind_style(h, ARG(3), ARG(0));
     RET(h2i(h)); STDRET(12);
 }
 static void u32_DefWindowProcA(void) {
+    /* Hand back the host pointer if this is the lParam we translated on the
+     * way in; anything else is the game's own value and passes through. */
+    LPARAM lp = (ARG(3) && ARG(3) == g_msg_target_lp) ? g_msg_host_lp
+                                                      : (LPARAM)(int32_t)ARG(3);
     RET((uint32_t)(int32_t)DefWindowProcA(i2h(ARG(0)), ARG(1),
-                                          (WPARAM)ARG(2), (LPARAM)(int32_t)ARG(3)));
+                                          (WPARAM)ARG(2), lp));
     STDRET(4);
 }
 static void u32_DestroyWindow(void) { RET(DestroyWindow(i2h(ARG(0))) ? 1 : 0); STDRET(1); }
@@ -434,8 +554,47 @@ static void u32_SetWindowPos(void) {
                      ARG(6)) ? 1 : 0);
     STDRET(7);
 }
-static void u32_GetWindowLongA(void) { RET((uint32_t)GetWindowLongA(i2h(ARG(0)), (int)ARG(1))); STDRET(2); }
-static void u32_SetWindowLongA(void) { RET((uint32_t)SetWindowLongA(i2h(ARG(0)), (int)ARG(1), (LONG)ARG(2))); STDRET(3); }
+/*
+ * GWLP_WNDPROC and GWLP_HINSTANCE are the two indices that must not pass
+ * through: the real answers are win_trampoline and the host module, neither of
+ * which the game may see. It gets its OWN procedure VA and its own image base,
+ * which is what it put there.
+ *
+ * SetWindowLongA(GWLP_WNDPROC) is subclassing: rebind the window to the new
+ * target procedure and leave the host trampoline installed, then report the
+ * previous target VA so a subclass chain still works.
+ */
+static void u32_GetWindowLongA(void) {
+    int idx = (int)ARG(1);
+    HWND h = i2h(ARG(0));
+    if (idx == GWLP_WNDPROC)   { RET(win_target_proc(h)); STDRET(2); return; }
+    if (idx == GWLP_HINSTANCE) { RET(0x00400000u);        STDRET(2); return; }
+    if (idx == GWL_STYLE || idx == GWL_EXSTYLE) {
+        uint32_t s = win_style(h, idx == GWL_EXSTYLE);
+        if (s) { RET(s); STDRET(2); return; }
+    }
+    uint32_t v = (uint32_t)GetWindowLongA(h, idx);
+    RET(v); STDRET(2);
+}
+static void u32_SetWindowLongA(void) {
+    int idx = (int)ARG(1);
+    HWND h = i2h(ARG(0));
+    if (idx == GWLP_WNDPROC) {
+        uint32_t prev = win_target_proc(h);
+        win_bind(h, ARG(2));
+        RET(prev); STDRET(3); return;
+    }
+    if (idx == GWLP_HINSTANCE) { RET(0x00400000u); STDRET(3); return; }
+    if (idx == GWL_STYLE || idx == GWL_EXSTYLE) {
+        /* Record it and report the old one; the host window keeps the style
+         * that keeps it on screen as a window. */
+        uint32_t prev = win_style(h, idx == GWL_EXSTYLE);
+        if (idx == GWL_STYLE) win_bind_style(h, ARG(2), win_style(h, 1));
+        else                  win_bind_style(h, win_style(h, 0), ARG(2));
+        RET(prev); STDRET(3); return;
+    }
+    RET((uint32_t)SetWindowLongA(h, idx, (LONG)ARG(2))); STDRET(3);
+}
 static void u32_GetClientRect(void) {
     RECT r = {0, 0, 0, 0};
     GetClientRect(i2h(ARG(0)), &r);
@@ -501,7 +660,10 @@ static void msg_in(uint32_t va, MSG* m) {
 }
 static void u32_GetMessageA(void) {
     MSG m;
-    BOOL r = GetMessageA(&m, ARG(1) ? i2h(ARG(1)) : NULL, ARG(2), ARG(3));
+    BOOL r = 0;      /* blocks until a message arrives */
+    HWND hw = ARG(1) ? i2h(ARG(1)) : NULL;      /* sampled before releasing */
+    uint32_t lo = ARG(2), hi = ARG(3);
+    BLOCKING(r = GetMessageA(&m, hw, lo, hi));
     if (r > 0) msg_out(ARG(0), &m);
     RET((uint32_t)r); STDRET(4);
 }
@@ -523,8 +685,10 @@ static void u32_MsgWaitForMultipleObjects(void) {
     /* The game uses this to idle until input or a handle signals. With no real
      * worker threads there is nothing else to wait on, so honour the timeout
      * against the message queue only. */
-    RET((uint32_t)MsgWaitForMultipleObjects(0, NULL, FALSE, ARG(2), ARG(4)));
-    STDRET(5);
+    /* Arguments sampled before the machine is released -- see BLOCKING. */
+    uint32_t r = 0, ms = ARG(2), flags = ARG(4);
+    BLOCKING(r = (uint32_t)MsgWaitForMultipleObjects(0, NULL, FALSE, ms, flags));
+    RET(r); STDRET(5);
 }
 static void u32_PostThreadMessageA(void) {
     RET(PostThreadMessageA(ARG(0), ARG(1), (WPARAM)ARG(2),
@@ -558,30 +722,209 @@ static void u32_CreateDialogParamA(void) {
     RET(h2i(h)); STDRET(5);
 }
 
-/* ----------------------------------------------------------- threads
+/* ------------------------------------------------------------- threads
 
- * ponytail: a created thread is NOT run. The handle comes back already
- * signalled so anything that waits on it proceeds.
+ * The game's startup creates a worker thread and then polls for it: acquire a
+ * mutex, check a queue, release, WaitForSingleObject(..., 100), repeat. With the
+ * thread not running, that loop never ends, and it is the last thing between
+ * here and content being loaded.
  *
- * The machine state (g_eax..g_esp, the FPU stack, the simulated stack itself)
- * is one set of globals, so a host thread executing lifted code would race the
- * main one on every register. Running the routine synchronously instead was
- * tried and does not terminate -- the thread InitBase creates is a service
- * loop, not an initialise-and-return worker.
+ * The obstacle is that the machine state -- g_eax..g_esp, the x87 stack, the
+ * control word -- is a set of globals shared by 10.7 million lines of generated
+ * C. Two host threads running lifted code would race on every register.
  *
- * The ceiling: anything the game only ever does on that thread never happens.
- * Lifting it properly means making the machine state thread-local and giving
- * each thread its own simulated stack, which is the point to do if a frame
- * turns out to depend on it.
+ * The obvious fix, making those globals `__thread`, does not work here: GCC on
+ * Windows compiles thread-local access through __emutls_get_address, a function
+ * call per access, and the generated code touches registers constantly. It was
+ * measured before being ruled out.
+ *
+ * So: ONE thread runs lifted code at a time, and the switch points are the
+ * blocking shims. A thread holds g_mach while it executes, saves the machine
+ * state and releases the lock before it blocks for real, and restores its own
+ * state after re-acquiring. Nothing mutates the registers except the holder of
+ * the lock, so no register is ever read by one thread while another writes it.
+ *
+ * Win32 TLS (TlsAlloc/TlsGetValue) holds the per-thread saved state, which is
+ * touched only at switch points -- a handful of times per millisecond, not per
+ * instruction, so emutls's cost does not arise.
+ *
+ * The ceiling: a thread that never blocks starves the others, because there is
+ * no preemption. The game's worker polls with a timeout, which is what makes
+ * this work. If a thread turns up that spins instead, it needs a real
+ * per-thread register file and the generated code has to change with it.
  */
-static void k32_CreateThread(void) {
-    fprintf(stderr, "[k32] CreateThread(start=0x%08X, param=0x%08X)"
-                    " -- not run (single machine state)\n", ARG(2), ARG(3));
-    if (ARG(5)) MEM32(ARG(5)) = 1;                     /* any non-zero id */
-    HANDLE h = CreateEventA(NULL, TRUE, TRUE, NULL);   /* already signalled */
-    RET(h ? h2i(h) : 0); STDRET(6);
+#define MACH_STACK_BASE 0x08000000u      /* below the heap, above the image */
+#define MACH_STACK_SIZE 0x00100000u      /* 1 MB each, as the main one is */
+#define MACH_MAX_THREADS 8
+
+typedef struct {
+    uint32_t eax, ecx, edx, ebx, esi, edi, ebp, esp;
+    double   st[8];
+    int      fp_top;
+    uint16_t fpu_cw;
+    uint32_t cur_func;
+    int      depth;        /* nested claims: only the outermost swaps state */
+    uint32_t fs_base;      /* each thread needs its OWN TIB: fs:[0] is the head
+                            * of the SEH chain, and MSVC's prologues splice
+                            * onto it. Sharing one means each thread unwinds
+                            * through the other's frames. */
+} mstate;
+
+static CRITICAL_SECTION g_mach;
+static DWORD  g_mach_tls = TLS_OUT_OF_INDEXES;
+static long   g_mach_threads;            /* how many simulated stacks handed out */
+int           g_no_threads;              /* --nothreads: the old behaviour */
+
+static void mach_save(mstate* m) {
+    m->eax = g_eax; m->ecx = g_ecx; m->edx = g_edx; m->ebx = g_ebx;
+    m->esi = g_esi; m->edi = g_edi; m->ebp = g_ebp; m->esp = g_esp;
+    memcpy(m->st, g_st, sizeof m->st);
+    m->fp_top = g_fp_top; m->fpu_cw = g_fpu_cw; m->cur_func = g_cur_func;
+    m->fs_base = g_fs_base;
 }
-static void k32_ResumeThread(void) { (void)ARG(0); RET(1); STDRET(1); }
+static void mach_load(const mstate* m) {
+    g_eax = m->eax; g_ecx = m->ecx; g_edx = m->edx; g_ebx = m->ebx;
+    g_esi = m->esi; g_edi = m->edi; g_ebp = m->ebp; g_esp = m->esp;
+    memcpy(g_st, m->st, sizeof g_st);
+    g_fp_top = m->fp_top; g_fpu_cw = m->fpu_cw; g_cur_func = m->cur_func;
+    g_fs_base = m->fs_base;
+}
+
+void mach_init(void) {
+    InitializeCriticalSection(&g_mach);
+    g_mach_tls = TlsAlloc();
+}
+
+/* Claim the machine for this thread, allocating its saved slot on first use. */
+/*
+ * Claims can NEST. Lifted code calls DispatchMessageA, Windows calls back into
+ * win_trampoline, and the trampoline runs more lifted code -- all on one thread
+ * that already owns the machine. A CRITICAL_SECTION lets that through, but
+ * reloading the saved state on the inner claim would throw away the live
+ * registers, so only the outermost claim swaps.
+ */
+int mach_depth(void) {
+    if (g_mach_tls == TLS_OUT_OF_INDEXES) return -1;
+    mstate* m = (mstate*)TlsGetValue(g_mach_tls);
+    return m ? m->depth : -1;
+}
+
+void mach_enter(void) {
+    if (g_mach_tls == TLS_OUT_OF_INDEXES) return;
+    EnterCriticalSection(&g_mach);
+    mstate* m = (mstate*)TlsGetValue(g_mach_tls);
+    if (!m) {
+        /* First claim by this thread -- the main one, whose state is whatever
+         * the runtime already set up. CAPTURE it rather than load: without a
+         * slot of its own nothing restored the main thread's registers after a
+         * worker ran, and it resumed on the worker's esp. */
+        m = (mstate*)calloc(1, sizeof *m);
+        if (!m) return;
+        mach_save(m);
+        m->depth = 1;
+        TlsSetValue(g_mach_tls, m);
+        return;
+    }
+    if (m->depth++ == 0) mach_load(m);
+}
+
+/* Release it around a real block, saving what this thread was doing. */
+void mach_leave(void) {
+    if (g_mach_tls == TLS_OUT_OF_INDEXES) return;
+    mstate* m = (mstate*)TlsGetValue(g_mach_tls);
+    if (m && --m->depth == 0) mach_save(m);
+    LeaveCriticalSection(&g_mach);
+}
+
+typedef struct {
+    recomp_func_t fn;
+    uint32_t      param;
+    uint32_t      stack_top;
+    uint32_t      tib;
+} thread_arg;
+
+static DWORD WINAPI lifted_thread(LPVOID p) {
+    thread_arg* a = (thread_arg*)p;
+    mstate* m = (mstate*)calloc(1, sizeof *m);
+    if (!m) return 1;
+    m->esp = a->stack_top;
+    m->fpu_cw = 0x037F;
+    m->fs_base = a->tib;
+    m->depth = 0;                        /* so the first claim LOADS this state */
+    TlsSetValue(g_mach_tls, m);
+
+    mach_enter();                        /* loads m, so esp is this stack */
+    PUSH32(g_esp, a->param);
+    PUSH32(g_esp, RECOMP_RETADDR);
+    a->fn();
+    uint32_t rc = g_eax;
+    mach_leave();
+
+    free(m);
+    free(a);
+    return rc;
+}
+
+static void k32_CreateThread(void) {
+    uint32_t start = ARG(2), param = ARG(3);
+    recomp_func_t fn = recomp_lookup(start);
+    if (!fn || g_no_threads || g_mach_threads >= MACH_MAX_THREADS) {
+        fprintf(stderr, "[k32] CreateThread(start=0x%08X) -- NOT run (%s)\n",
+                start, !fn ? "not lifted"
+                     : g_no_threads ? "--nothreads" : "too many threads");
+        if (ARG(5)) MEM32(ARG(5)) = 1;
+        HANDLE h = CreateEventA(NULL, TRUE, TRUE, NULL);   /* signalled */
+        RET(h ? h2i(h) : 0); STDRET(6); return;
+    }
+
+    /* Each simulated thread gets its own 1 MB of target stack. They sit below
+     * the heap so a stray pointer into one is still recognisable by region. */
+    long n = InterlockedIncrement(&g_mach_threads) - 1;
+    uint32_t base = MACH_STACK_BASE + (uint32_t)n * MACH_STACK_SIZE;
+    if (!VirtualAlloc((void*)(uintptr_t)base, MACH_STACK_SIZE,
+                      MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)) {
+        fprintf(stderr, "[k32] CreateThread: stack at 0x%08X failed (%lu)\n",
+                base, GetLastError());
+        RET(0); STDRET(6); return;
+    }
+
+    thread_arg* a = (thread_arg*)calloc(1, sizeof *a);
+    a->fn = fn;
+    a->param = param;
+    a->stack_top = base + MACH_STACK_SIZE - 0x100;
+    /* Its own TIB, laid out like the main one in recomp_runtime.c. */
+    a->tib = crt_alloc(0x1000);
+    memset((void*)(uintptr_t)ADDR(a->tib), 0, 0x1000);
+    MEM32(a->tib + 0x00) = 0xFFFFFFFFu;              /* SEH: end of chain */
+    MEM32(a->tib + 0x04) = base + MACH_STACK_SIZE;   /* stack base */
+    MEM32(a->tib + 0x08) = base;                     /* stack limit */
+    MEM32(a->tib + 0x18) = a->tib;
+
+    /*
+     * CREATE_SUSPENDED has to be honoured. The game creates this thread
+     * suspended, finishes building the object the routine works on, and only
+     * then resumes it -- started early, the routine runs against a half-built
+     * object and faults writing through a member not yet assigned.
+     *
+     * The real host thread handle is what comes back, so WaitForSingleObject
+     * on it signals when the routine returns, the way a thread handle does,
+     * and ResumeThread has something to resume.
+     */
+    DWORD tid = 0;
+    DWORD flags = ARG(4) & CREATE_SUSPENDED;
+    HANDLE th = CreateThread(NULL, 0, lifted_thread, a, flags, &tid);
+    fprintf(stderr, "[k32] CreateThread(start=0x%08X, param=0x%08X)%s"
+                    " -> thread %lu, target stack 0x%08X..0x%08X\n",
+            start, param, flags ? " suspended" : "", tid,
+            base, base + MACH_STACK_SIZE);
+    if (ARG(5)) MEM32(ARG(5)) = (uint32_t)tid;
+    RET(th ? h2i(th) : 0); STDRET(6);
+}
+static void k32_ResumeThread(void) {
+    HANDLE h = i2h(ARG(0));
+    RET(h ? (uint32_t)ResumeThread(h) : 0xFFFFFFFFu); STDRET(1);
+}
+
 
 
 static const struct { const char* name; import_fn_t fn; } g_real[] = {

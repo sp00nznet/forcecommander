@@ -99,7 +99,7 @@ static void stlw(const char* what, uint32_t o, uint32_t n) {
  * The upper bound matters as much as the lower one: the first version of this
  * only rejected small values and let a _Ptr of 0x9C464C95 straight through. */
 #define S_LOW  0x00200000u
-#define S_HIGH 0x18000000u
+#define S_HIGH 0x50000000u   /* heap base + FOCOM_HEAP_SIZE */
 #define S_MAXLEN 0x08000000u
 
 /*

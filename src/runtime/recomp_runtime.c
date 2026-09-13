@@ -51,6 +51,10 @@ FILE* g_calltrace = NULL;
  * given lifted function is entered. Reading the generated C tells you which
  * member is dereferenced; only a run tells you what is in it. */
 int g_list_stubs = 0;
+extern int g_no_threads;
+void mach_init(void);
+void mach_enter(void);
+void mach_leave(void);
 extern int g_shim_trace;
 uint32_t g_poison = 0;
 int g_poison_hit = 0;
@@ -114,7 +118,15 @@ void recomp_dump_trace(const char* why) {
 #define FOCOM_STACK_SIZE  0x00100000u        /* 1 MB */
 #define FOCOM_STACK_TOP   (FOCOM_STACK_BASE + FOCOM_STACK_SIZE)
 #define FOCOM_HEAP_BASE   0x10000000u
-#define FOCOM_HEAP_SIZE   0x08000000u        /* 128 MB */
+/* 1 GB. The game allocates 513,718 times just loading its object templates,
+ * and crt_alloc never reuses a byte -- 128 MB ran out mid-load, after which
+ * every buf_new failed, every string came back empty, and the game reported
+ * "Duplicated object template found" because all its keys compared equal. The
+ * target's address space runs to 0x80000000 before the host's own image, so
+ * there is room; MEM_RESERVE without MEM_COMMIT keeps the pages until touched.
+ * ponytail: a bump allocator with a bigger bump. Write a real free list if a
+ * whole mission needs more than this. */
+#define FOCOM_HEAP_SIZE   0x40000000u        /* 1 GB */
 
 /* ---------------------------------------------------------------- dispatch */
 
@@ -501,6 +513,7 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc)
             g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--poison") && i + 1 < argc)
             g_poison = (uint32_t)strtoul(argv[++i], NULL, 0);
@@ -522,6 +535,7 @@ int main(int argc, char** argv) {
     }
 
     AddVectoredExceptionHandler(1, veh);
+    mach_init();
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
 
     printf("Force Commander recomp host\n");
@@ -656,7 +670,13 @@ int main(int argc, char** argv) {
     }
     printf("  entering 0x%08X\n\n", focom_entry_va);
     fflush(stdout);
+    /* The main thread owns the machine until it blocks. Without this claim it
+     * has no saved slot, and the first window-procedure callback creates one
+     * from whatever the registers held at that moment -- every later callback
+     * then LOADS that snapshot over the live state. */
+    mach_enter();
     fn();
+    mach_leave();
 
     printf("\nentry returned; pumping the window\n");
     while (host_pump()) Sleep(16);

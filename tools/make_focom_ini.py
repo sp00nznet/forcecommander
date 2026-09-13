@@ -18,8 +18,15 @@ The template below is the installer's, read out of the compiled InstallShield
 script `Install\\setup.ins` (search it for "CheckAppMutex" -- the literals are
 plain text in the bytecode). `<T>` there is the install directory.
 
-Note `RPKDir` appears twice, and that is verbatim: the installer emits the line
-twice with the same argument.
+The installer emits `RPKDir` TWICE, and the two are not the same line: the
+bytecode holds different path variables (`b 1c` and `b 1f`), one for the
+install directory and one for the CD, so a partial install can leave data on
+the disc. With everything installed locally they resolve to the same directory
+and the game says so itself, through its own message box:
+
+    Error in workspace: Duplicated object template found:
+
+so only one is emitted here.
 
     py -3 tools/make_focom_ini.py G:\\path\\to\\install > Focom.ini
     py -3 tools/make_focom_ini.py --selftest
@@ -33,7 +40,6 @@ TEMPLATE = [
     ('LoadAppFileName', r'{T}\Resource\appname.ini'),
     ('ShowLoadingPanel', None),
     ('InitBase', None),
-    ('RPKDir', r'{T}\Resource\forcecommand'),
     ('RPKDir', r'{T}\Resource\forcecommand'),
     ('Workspace', r'{T}\Resource\forcecommand\forcecommand.gpl'),
     ('Movies', r'{T}\Resource\Movies'),

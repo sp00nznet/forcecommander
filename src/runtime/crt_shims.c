@@ -50,7 +50,7 @@ int g_shim_trace = 0;
  * actually runs out, not before.
  */
 #define HEAP_BASE 0x10000000u
-#define HEAP_SIZE 0x08000000u
+#define HEAP_SIZE 0x40000000u   /* 1 GB -- see FOCOM_HEAP_SIZE */
 
 static uint32_t heap_next = HEAP_BASE + 16;
 static uint32_t heap_peak = 0;
@@ -397,6 +397,20 @@ static void crt_floor(void)  { double a; uint64_t u = MEM64(g_esp+4); memcpy(&a,
 static void crt_ceil(void)   { double a; uint64_t u = MEM64(g_esp+4); memcpy(&a,&u,8); fpush(ceil(a)); CDECLRET(); }
 static void crt_ftol(void)   { double a = fpeek(0); fpop(); RET((uint32_t)(int32_t)a); CDECLRET(); }
 
+/* shims_impl.c owns the machine lock. Every shim that really blocks has to
+ * release it, or the thread it is waiting for can never run -- there is no
+ * preemption, the switch points ARE the blocking calls. */
+void mach_enter(void);
+void mach_leave(void);
+/*
+ * Read every argument BEFORE this and write the result AFTER it. ARG(n) reads
+ * the simulated stack through g_esp, and between mach_leave() and mach_enter()
+ * the machine belongs to another thread -- so `BLOCKING(Sleep(ARG(0)))` samples
+ * g_esp while the other thread is using it. That is how a worker's `edi` -- the
+ * `this` it had just loaded -- came back as 0 across a Sleep(0).
+ */
+#define BLOCKING(expr) do { mach_leave(); (expr); mach_enter(); } while (0)
+
 /* shims_impl.c owns the handle table; a host HANDLE is 64 bits. */
 uint32_t h2i(HANDLE h);
 HANDLE   i2h(uint32_t i);
@@ -730,6 +744,7 @@ static void k32_ReleaseMutex(void) {
 static void k32_CreateEventA(void) {
     const char* nm = ARG(3) ? (const char*)(uintptr_t)ADDR(ARG(3)) : NULL;
     HANDLE h = CreateEventA(NULL, (BOOL)ARG(1), (BOOL)ARG(2), nm);
+    if (g_shim_trace) fprintf(stderr, "[k32] CreateEventA(manual=%u, set=%u, \"%s\") -> h=%u\n", ARG(1), ARG(2), nm ? nm : "", h2i(h));
     RET(h ? h2i(h) : 0); STDRET(4);
 }
 static void k32_SetEvent(void)   { HANDLE h = i2h(ARG(0)); RET(h ? (SetEvent(h) ? 1 : 0) : 0);   STDRET(1); }
@@ -737,7 +752,12 @@ static void k32_ResetEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (ResetEvent(h
 static void k32_PulseEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (PulseEvent(h) ? 1 : 0) : 0); STDRET(1); }
 static void k32_WaitForSingleObject(void) {
     HANDLE h = i2h(ARG(0));
-    RET(h ? (uint32_t)WaitForSingleObject(h, ARG(1)) : 0xFFFFFFFFu); STDRET(2);
+    uint32_t r = 0xFFFFFFFFu, ms = ARG(1);      /* sampled before releasing */
+    if (h) BLOCKING(r = (uint32_t)WaitForSingleObject(h, ms));
+    static unsigned n;
+    if (g_shim_trace && n++ < 12)
+        fprintf(stderr, "[k32] WaitForSingleObject(h=%u, %u) -> %u\n", ARG(0), ARG(1), r);
+    RET(r); STDRET(2);
 }
 static void k32_CopyFileA(void) {
     char a[MAX_PATH * 2], b[MAX_PATH * 2], p[MAX_PATH * 2];
@@ -1180,7 +1200,11 @@ static void k32_GetVolumeInformationA(void) {
 }
 static void k32_GetTickCount(void)     { RET((uint32_t)GetTickCount()); STDRET(0); }
 static void k32_GetLastError(void)     { RET((uint32_t)GetLastError()); STDRET(0); }
-static void k32_Sleep(void)            { Sleep(ARG(0)); RET(0); STDRET(1); }
+static void k32_Sleep(void) {
+    uint32_t ms = ARG(0);                       /* sampled before releasing */
+    BLOCKING(Sleep(ms));
+    RET(0); STDRET(1);
+}
 /*
  * Both of these must return an ABSOLUTE path. The game feeds what they return
  * straight back into _fullpath, so a relative "game" got resolved against
