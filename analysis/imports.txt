@@ -1,0 +1,669 @@
+
+======================================================================
+ Focom.exe
+======================================================================
+
+  ADVAPI32.dll (5 functions):
+    RegCloseKey
+    RegCreateKeyExA
+    RegOpenKeyExA
+    RegQueryValueExA
+    RegSetValueExA
+
+  DINPUT.dll (1 functions):
+    DirectInputCreateA
+
+  GDI32.dll (11 functions):
+    CreateCompatibleDC
+    CreateFontA
+    DeleteDC
+    DeleteObject
+    GetStockObject
+    GetTextExtentPoint32A
+    SelectObject
+    SetBkMode
+    SetTextColor
+    StretchBlt
+    TextOutA
+
+  KERNEL32.dll (63 functions):
+    CloseHandle
+    CopyFileA
+    CreateDirectoryA
+    CreateEventA
+    CreateFileA
+    CreateMutexA
+    CreateThread
+    CreateToolhelp32Snapshot
+    DeleteCriticalSection
+    DeleteFileA
+    EnterCriticalSection
+    FileTimeToLocalFileTime
+    FileTimeToSystemTime
+    FindClose
+    FindFirstFileA
+    FindNextFileA
+    FormatMessageA
+    FreeLibrary
+    GetCurrentThread
+    GetCurrentThreadId
+    GetLastError
+    GetLocalTime
+    GetModuleFileNameA
+    GetModuleHandleA
+    GetProcAddress
+    GetStartupInfoA
+    GetSystemInfo
+    GetTempFileNameA
+    GetTickCount
+    GetVersionExA
+    GetVolumeInformationA
+    GlobalMemoryStatus
+    Heap32First
+    Heap32ListFirst
+    Heap32ListNext
+    Heap32Next
+    InitializeCriticalSection
+    LeaveCriticalSection
+    LoadLibraryA
+    LocalFileTimeToFileTime
+    LocalFree
+    Module32First
+    Module32Next
+    MoveFileA
+    OutputDebugStringA
+    PulseEvent
+    QueryPerformanceCounter
+    QueryPerformanceFrequency
+    ReadFile
+    ReleaseMutex
+    RemoveDirectoryA
+    ResetEvent
+    ResumeThread
+    SetEndOfFile
+    SetEvent
+    SetFileAttributesA
+    SetFilePointer
+    SetFileTime
+    Sleep
+    SystemTimeToFileTime
+    WaitForSingleObject
+    WriteFile
+    lstrlenA
+
+  MSVCP60.dll (82 functions):
+    ??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z
+    ??0?$basic_ios@DU?$char_traits@D@std@@@std@@IAE@XZ
+    ??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z
+    ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV01@@Z
+    ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z
+    ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@PBDABV?$allocator@D@1@@Z
+    ??0Init@ios_base@std@@QAE@XZ
+    ??0_Lockit@std@@QAE@XZ
+    ??0_Winit@std@@QAE@XZ
+    ??0ios_base@std@@IAE@XZ
+    ??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ
+    ??1?$basic_fstream@DU?$char_traits@D@std@@@std@@UAE@XZ
+    ??1?$basic_ios@DU?$char_traits@D@std@@@std@@UAE@XZ
+    ??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ
+    ??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ
+    ??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ
+    ??1Init@ios_base@std@@QAE@XZ
+    ??1_Lockit@std@@QAE@XZ
+    ??1_Winit@std@@QAE@XZ
+    ??1ios_base@std@@UAE@XZ
+    ??1locale@std@@QAE@XZ
+    ??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z
+    ??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z
+    ??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@PBD@Z
+    ??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z
+    ??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z
+    ??8std@@YA_NPBDABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z
+    ??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z
+    ??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z
+    ??A?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEABDI@Z
+    ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@0@Z
+    ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@D@Z
+    ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@PBD@Z
+    ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBDABV10@@Z
+    ??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z
+    ??Ostd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z
+    ??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@ABV01@@Z
+    ??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z
+    ??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@
+    ??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@
+    ??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@
+    ??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@
+    ??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@
+    ??_D?$basic_fstream@DU?$char_traits@D@std@@@std@@QAEXXZ
+    ??_F?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXXZ
+    ?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB
+    ?_Copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z
+    ?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z
+    ?_Freeze@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ
+    ?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z
+    ?_Refcnt@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEAAEPBD@Z
+    ?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ
+    ?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z
+    ?_Xlen@std@@YAXXZ
+    ?_Xran@std@@YAXXZ
+    ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z
+    ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z
+    ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z
+    ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z
+    ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z
+    ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z
+    ?assign@?$char_traits@D@std@@SAXAADABD@Z
+    ?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z
+    ?clear@ios_base@std@@QAEXH_N@Z
+    ?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ
+    ?copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPADII@Z
+    ?copy@?$char_traits@D@std@@SAPADPADPBDI@Z
+    ?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z
+    ?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z
+    ?find_first_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z
+    ?find_first_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z
+    ?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z
+    ?find_last_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z
+    ?length@?$char_traits@D@std@@SAIPBD@Z
+    ?max_size@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIXZ
+    ?nothrow@std@@3Unothrow_t@1@B
+    ?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB
+    ?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z
+    ?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIABV12@II@Z
+    ?resize@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXI@Z
+    ?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z
+    ?substr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBE?AV12@II@Z
+
+  MSVCRT.dll (67 functions):
+    ??1type_info@@UAE@XZ
+    ??2@YAPAXI@Z
+    ??8type_info@@QBEHABV0@@Z
+    ?terminate@@YAXXZ
+    _CIacos
+    _CIasin
+    _CIfmod
+    _CIpow
+    _CxxThrowException
+    _XcptFilter
+    __CxxFrameHandler
+    __RTDynamicCast
+    __RTtypeid
+    __dllonexit
+    __getmainargs
+    __p__commode
+    __p__fmode
+    __set_app_type
+    __setusermatherr
+    _acmdln
+    _adjust_fdiv
+    _callnewh
+    _controlfp
+    _except_handler3
+    _exit
+    _ftol
+    _fullpath
+    _initterm
+    _onexit
+    _purecall
+    _splitpath
+    _stricmp
+    _strnicmp
+    atof
+    atoi
+    bsearch
+    ceil
+    exit
+    fclose
+    fgets
+    floor
+    fopen
+    fprintf
+    fread
+    free
+    fseek
+    ftell
+    isalnum
+    isalpha
+    isdigit
+    islower
+    isprint
+    isspace
+    isupper
+    isxdigit
+    malloc
+    memchr
+    memmove
+    mktime
+    realloc
+    sprintf
+    sscanf
+    strncmp
+    strncpy
+    tolower
+    toupper
+    vsprintf
+
+  SHELL32.dll (1 functions):
+    ShellExecuteA
+
+  USER32.dll (44 functions):
+    BeginPaint
+    CharNextA
+    CharPrevA
+    ClientToScreen
+    CreateDialogParamA
+    CreateWindowExA
+    DefWindowProcA
+    DestroyWindow
+    DispatchMessageA
+    EndPaint
+    GetClientRect
+    GetDesktopWindow
+    GetKeyState
+    GetMessageA
+    GetParent
+    GetPropA
+    GetSystemMetrics
+    GetUpdateRect
+    GetWindowLongA
+    GetWindowPlacement
+    GetWindowRect
+    GetWindowTextA
+    IsIconic
+    IsWindow
+    IsWindowVisible
+    LoadBitmapA
+    LoadCursorA
+    MessageBoxA
+    MsgWaitForMultipleObjects
+    PeekMessageA
+    PostThreadMessageA
+    RegisterClassExA
+    SetCursor
+    SetCursorPos
+    SetParent
+    SetPropA
+    SetWindowLongA
+    SetWindowPlacement
+    SetWindowPos
+    SetWindowTextA
+    ShowCursor
+    ShowWindow
+    TranslateMessage
+    UpdateWindow
+
+  WINMM.dll (8 functions):
+    PlaySoundA
+    mciSendStringA
+    timeBeginPeriod
+    timeEndPeriod
+    timeGetDevCaps
+    timeGetTime
+    timeKillEvent
+    timeSetEvent
+
+  mss32.dll (22 functions):
+    _AIL_allocate_sample_handle@4
+    _AIL_digital_handle_reacquire@4
+    _AIL_digital_handle_release@4
+    _AIL_end_sample@4
+    _AIL_get_DirectSound_info@12
+    _AIL_init_sample@4
+    _AIL_last_error@0
+    _AIL_release_sample_handle@4
+    _AIL_sample_status@4
+    _AIL_set_DirectSound_HWND@8
+    _AIL_set_named_sample_file@20
+    _AIL_set_preference@8
+    _AIL_set_sample_file@12
+    _AIL_set_sample_loop_count@8
+    _AIL_set_sample_pan@8
+    _AIL_set_sample_playback_rate@8
+    _AIL_set_sample_volume@8
+    _AIL_shutdown@0
+    _AIL_start_sample@4
+    _AIL_startup@0
+    _AIL_waveOutClose@4
+    _AIL_waveOutOpen@16
+
+  ole32.dll (3 functions):
+    CoCreateInstance
+    CoInitialize
+    CoUninitialize
+
+  TOTAL: 307 imported functions
+
+
+======================================================================
+ CROSS-MODULE SUMMARY
+======================================================================
+
+ADVAPI32.dll (5 unique functions):
+  RegCloseKey                                   <- Focom.exe
+  RegCreateKeyExA                               <- Focom.exe
+  RegOpenKeyExA                                 <- Focom.exe
+  RegQueryValueExA                              <- Focom.exe
+  RegSetValueExA                                <- Focom.exe
+
+DINPUT.dll (1 unique functions):
+  DirectInputCreateA                            <- Focom.exe
+
+GDI32.dll (11 unique functions):
+  CreateCompatibleDC                            <- Focom.exe
+  CreateFontA                                   <- Focom.exe
+  DeleteDC                                      <- Focom.exe
+  DeleteObject                                  <- Focom.exe
+  GetStockObject                                <- Focom.exe
+  GetTextExtentPoint32A                         <- Focom.exe
+  SelectObject                                  <- Focom.exe
+  SetBkMode                                     <- Focom.exe
+  SetTextColor                                  <- Focom.exe
+  StretchBlt                                    <- Focom.exe
+  TextOutA                                      <- Focom.exe
+
+KERNEL32.dll (63 unique functions):
+  CloseHandle                                   <- Focom.exe
+  CopyFileA                                     <- Focom.exe
+  CreateDirectoryA                              <- Focom.exe
+  CreateEventA                                  <- Focom.exe
+  CreateFileA                                   <- Focom.exe
+  CreateMutexA                                  <- Focom.exe
+  CreateThread                                  <- Focom.exe
+  CreateToolhelp32Snapshot                      <- Focom.exe
+  DeleteCriticalSection                         <- Focom.exe
+  DeleteFileA                                   <- Focom.exe
+  EnterCriticalSection                          <- Focom.exe
+  FileTimeToLocalFileTime                       <- Focom.exe
+  FileTimeToSystemTime                          <- Focom.exe
+  FindClose                                     <- Focom.exe
+  FindFirstFileA                                <- Focom.exe
+  FindNextFileA                                 <- Focom.exe
+  FormatMessageA                                <- Focom.exe
+  FreeLibrary                                   <- Focom.exe
+  GetCurrentThread                              <- Focom.exe
+  GetCurrentThreadId                            <- Focom.exe
+  GetLastError                                  <- Focom.exe
+  GetLocalTime                                  <- Focom.exe
+  GetModuleFileNameA                            <- Focom.exe
+  GetModuleHandleA                              <- Focom.exe
+  GetProcAddress                                <- Focom.exe
+  GetStartupInfoA                               <- Focom.exe
+  GetSystemInfo                                 <- Focom.exe
+  GetTempFileNameA                              <- Focom.exe
+  GetTickCount                                  <- Focom.exe
+  GetVersionExA                                 <- Focom.exe
+  GetVolumeInformationA                         <- Focom.exe
+  GlobalMemoryStatus                            <- Focom.exe
+  Heap32First                                   <- Focom.exe
+  Heap32ListFirst                               <- Focom.exe
+  Heap32ListNext                                <- Focom.exe
+  Heap32Next                                    <- Focom.exe
+  InitializeCriticalSection                     <- Focom.exe
+  LeaveCriticalSection                          <- Focom.exe
+  LoadLibraryA                                  <- Focom.exe
+  LocalFileTimeToFileTime                       <- Focom.exe
+  LocalFree                                     <- Focom.exe
+  Module32First                                 <- Focom.exe
+  Module32Next                                  <- Focom.exe
+  MoveFileA                                     <- Focom.exe
+  OutputDebugStringA                            <- Focom.exe
+  PulseEvent                                    <- Focom.exe
+  QueryPerformanceCounter                       <- Focom.exe
+  QueryPerformanceFrequency                     <- Focom.exe
+  ReadFile                                      <- Focom.exe
+  ReleaseMutex                                  <- Focom.exe
+  RemoveDirectoryA                              <- Focom.exe
+  ResetEvent                                    <- Focom.exe
+  ResumeThread                                  <- Focom.exe
+  SetEndOfFile                                  <- Focom.exe
+  SetEvent                                      <- Focom.exe
+  SetFileAttributesA                            <- Focom.exe
+  SetFilePointer                                <- Focom.exe
+  SetFileTime                                   <- Focom.exe
+  Sleep                                         <- Focom.exe
+  SystemTimeToFileTime                          <- Focom.exe
+  WaitForSingleObject                           <- Focom.exe
+  WriteFile                                     <- Focom.exe
+  lstrlenA                                      <- Focom.exe
+
+MSVCP60.dll (82 unique functions):
+  ??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z <- Focom.exe
+  ??0?$basic_ios@DU?$char_traits@D@std@@@std@@IAE@XZ <- Focom.exe
+  ??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z <- Focom.exe
+  ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV01@@Z <- Focom.exe
+  ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z <- Focom.exe
+  ??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@PBDABV?$allocator@D@1@@Z <- Focom.exe
+  ??0Init@ios_base@std@@QAE@XZ                  <- Focom.exe
+  ??0_Lockit@std@@QAE@XZ                        <- Focom.exe
+  ??0_Winit@std@@QAE@XZ                         <- Focom.exe
+  ??0ios_base@std@@IAE@XZ                       <- Focom.exe
+  ??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ <- Focom.exe
+  ??1?$basic_fstream@DU?$char_traits@D@std@@@std@@UAE@XZ <- Focom.exe
+  ??1?$basic_ios@DU?$char_traits@D@std@@@std@@UAE@XZ <- Focom.exe
+  ??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ <- Focom.exe
+  ??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ <- Focom.exe
+  ??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ <- Focom.exe
+  ??1Init@ios_base@std@@QAE@XZ                  <- Focom.exe
+  ??1_Lockit@std@@QAE@XZ                        <- Focom.exe
+  ??1_Winit@std@@QAE@XZ                         <- Focom.exe
+  ??1ios_base@std@@UAE@XZ                       <- Focom.exe
+  ??1locale@std@@QAE@XZ                         <- Focom.exe
+  ??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z <- Focom.exe
+  ??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z <- Focom.exe
+  ??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@PBD@Z <- Focom.exe
+  ??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z <- Focom.exe
+  ??8std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z <- Focom.exe
+  ??8std@@YA_NPBDABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z <- Focom.exe
+  ??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z <- Focom.exe
+  ??9std@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBD@Z <- Focom.exe
+  ??A?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEABDI@Z <- Focom.exe
+  ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@0@Z <- Focom.exe
+  ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@D@Z <- Focom.exe
+  ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@PBD@Z <- Focom.exe
+  ??Hstd@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@PBDABV10@@Z <- Focom.exe
+  ??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z <- Focom.exe
+  ??Ostd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z <- Focom.exe
+  ??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@ABV01@@Z <- Focom.exe
+  ??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z <- Focom.exe
+  ??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@ <- Focom.exe
+  ??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@ <- Focom.exe
+  ??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@ <- Focom.exe
+  ??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@ <- Focom.exe
+  ??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@ <- Focom.exe
+  ??_D?$basic_fstream@DU?$char_traits@D@std@@@std@@QAEXXZ <- Focom.exe
+  ??_F?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXXZ <- Focom.exe
+  ?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB <- Focom.exe
+  ?_Copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z <- Focom.exe
+  ?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z <- Focom.exe
+  ?_Freeze@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ <- Focom.exe
+  ?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z <- Focom.exe
+  ?_Refcnt@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEAAEPBD@Z <- Focom.exe
+  ?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ <- Focom.exe
+  ?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z <- Focom.exe
+  ?_Xlen@std@@YAXXZ                             <- Focom.exe
+  ?_Xran@std@@YAXXZ                             <- Focom.exe
+  ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z <- Focom.exe
+  ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z <- Focom.exe
+  ?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z <- Focom.exe
+  ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z <- Focom.exe
+  ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z <- Focom.exe
+  ?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z <- Focom.exe
+  ?assign@?$char_traits@D@std@@SAXAADABD@Z      <- Focom.exe
+  ?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z <- Focom.exe
+  ?clear@ios_base@std@@QAEXH_N@Z                <- Focom.exe
+  ?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ <- Focom.exe
+  ?copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPADII@Z <- Focom.exe
+  ?copy@?$char_traits@D@std@@SAPADPADPBDI@Z     <- Focom.exe
+  ?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z <- Focom.exe
+  ?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z <- Focom.exe
+  ?find_first_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z <- Focom.exe
+  ?find_first_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z <- Focom.exe
+  ?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z <- Focom.exe
+  ?find_last_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z <- Focom.exe
+  ?length@?$char_traits@D@std@@SAIPBD@Z         <- Focom.exe
+  ?max_size@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIXZ <- Focom.exe
+  ?nothrow@std@@3Unothrow_t@1@B                 <- Focom.exe
+  ?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB <- Focom.exe
+  ?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z <- Focom.exe
+  ?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIABV12@II@Z <- Focom.exe
+  ?resize@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXI@Z <- Focom.exe
+  ?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z <- Focom.exe
+  ?substr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBE?AV12@II@Z <- Focom.exe
+
+MSVCRT.dll (67 unique functions):
+  ??1type_info@@UAE@XZ                          <- Focom.exe
+  ??2@YAPAXI@Z                                  <- Focom.exe
+  ??8type_info@@QBEHABV0@@Z                     <- Focom.exe
+  ?terminate@@YAXXZ                             <- Focom.exe
+  _CIacos                                       <- Focom.exe
+  _CIasin                                       <- Focom.exe
+  _CIfmod                                       <- Focom.exe
+  _CIpow                                        <- Focom.exe
+  _CxxThrowException                            <- Focom.exe
+  _XcptFilter                                   <- Focom.exe
+  __CxxFrameHandler                             <- Focom.exe
+  __RTDynamicCast                               <- Focom.exe
+  __RTtypeid                                    <- Focom.exe
+  __dllonexit                                   <- Focom.exe
+  __getmainargs                                 <- Focom.exe
+  __p__commode                                  <- Focom.exe
+  __p__fmode                                    <- Focom.exe
+  __set_app_type                                <- Focom.exe
+  __setusermatherr                              <- Focom.exe
+  _acmdln                                       <- Focom.exe
+  _adjust_fdiv                                  <- Focom.exe
+  _callnewh                                     <- Focom.exe
+  _controlfp                                    <- Focom.exe
+  _except_handler3                              <- Focom.exe
+  _exit                                         <- Focom.exe
+  _ftol                                         <- Focom.exe
+  _fullpath                                     <- Focom.exe
+  _initterm                                     <- Focom.exe
+  _onexit                                       <- Focom.exe
+  _purecall                                     <- Focom.exe
+  _splitpath                                    <- Focom.exe
+  _stricmp                                      <- Focom.exe
+  _strnicmp                                     <- Focom.exe
+  atof                                          <- Focom.exe
+  atoi                                          <- Focom.exe
+  bsearch                                       <- Focom.exe
+  ceil                                          <- Focom.exe
+  exit                                          <- Focom.exe
+  fclose                                        <- Focom.exe
+  fgets                                         <- Focom.exe
+  floor                                         <- Focom.exe
+  fopen                                         <- Focom.exe
+  fprintf                                       <- Focom.exe
+  fread                                         <- Focom.exe
+  free                                          <- Focom.exe
+  fseek                                         <- Focom.exe
+  ftell                                         <- Focom.exe
+  isalnum                                       <- Focom.exe
+  isalpha                                       <- Focom.exe
+  isdigit                                       <- Focom.exe
+  islower                                       <- Focom.exe
+  isprint                                       <- Focom.exe
+  isspace                                       <- Focom.exe
+  isupper                                       <- Focom.exe
+  isxdigit                                      <- Focom.exe
+  malloc                                        <- Focom.exe
+  memchr                                        <- Focom.exe
+  memmove                                       <- Focom.exe
+  mktime                                        <- Focom.exe
+  realloc                                       <- Focom.exe
+  sprintf                                       <- Focom.exe
+  sscanf                                        <- Focom.exe
+  strncmp                                       <- Focom.exe
+  strncpy                                       <- Focom.exe
+  tolower                                       <- Focom.exe
+  toupper                                       <- Focom.exe
+  vsprintf                                      <- Focom.exe
+
+SHELL32.dll (1 unique functions):
+  ShellExecuteA                                 <- Focom.exe
+
+USER32.dll (44 unique functions):
+  BeginPaint                                    <- Focom.exe
+  CharNextA                                     <- Focom.exe
+  CharPrevA                                     <- Focom.exe
+  ClientToScreen                                <- Focom.exe
+  CreateDialogParamA                            <- Focom.exe
+  CreateWindowExA                               <- Focom.exe
+  DefWindowProcA                                <- Focom.exe
+  DestroyWindow                                 <- Focom.exe
+  DispatchMessageA                              <- Focom.exe
+  EndPaint                                      <- Focom.exe
+  GetClientRect                                 <- Focom.exe
+  GetDesktopWindow                              <- Focom.exe
+  GetKeyState                                   <- Focom.exe
+  GetMessageA                                   <- Focom.exe
+  GetParent                                     <- Focom.exe
+  GetPropA                                      <- Focom.exe
+  GetSystemMetrics                              <- Focom.exe
+  GetUpdateRect                                 <- Focom.exe
+  GetWindowLongA                                <- Focom.exe
+  GetWindowPlacement                            <- Focom.exe
+  GetWindowRect                                 <- Focom.exe
+  GetWindowTextA                                <- Focom.exe
+  IsIconic                                      <- Focom.exe
+  IsWindow                                      <- Focom.exe
+  IsWindowVisible                               <- Focom.exe
+  LoadBitmapA                                   <- Focom.exe
+  LoadCursorA                                   <- Focom.exe
+  MessageBoxA                                   <- Focom.exe
+  MsgWaitForMultipleObjects                     <- Focom.exe
+  PeekMessageA                                  <- Focom.exe
+  PostThreadMessageA                            <- Focom.exe
+  RegisterClassExA                              <- Focom.exe
+  SetCursor                                     <- Focom.exe
+  SetCursorPos                                  <- Focom.exe
+  SetParent                                     <- Focom.exe
+  SetPropA                                      <- Focom.exe
+  SetWindowLongA                                <- Focom.exe
+  SetWindowPlacement                            <- Focom.exe
+  SetWindowPos                                  <- Focom.exe
+  SetWindowTextA                                <- Focom.exe
+  ShowCursor                                    <- Focom.exe
+  ShowWindow                                    <- Focom.exe
+  TranslateMessage                              <- Focom.exe
+  UpdateWindow                                  <- Focom.exe
+
+WINMM.dll (8 unique functions):
+  PlaySoundA                                    <- Focom.exe
+  mciSendStringA                                <- Focom.exe
+  timeBeginPeriod                               <- Focom.exe
+  timeEndPeriod                                 <- Focom.exe
+  timeGetDevCaps                                <- Focom.exe
+  timeGetTime                                   <- Focom.exe
+  timeKillEvent                                 <- Focom.exe
+  timeSetEvent                                  <- Focom.exe
+
+mss32.dll (22 unique functions):
+  _AIL_allocate_sample_handle@4                 <- Focom.exe
+  _AIL_digital_handle_reacquire@4               <- Focom.exe
+  _AIL_digital_handle_release@4                 <- Focom.exe
+  _AIL_end_sample@4                             <- Focom.exe
+  _AIL_get_DirectSound_info@12                  <- Focom.exe
+  _AIL_init_sample@4                            <- Focom.exe
+  _AIL_last_error@0                             <- Focom.exe
+  _AIL_release_sample_handle@4                  <- Focom.exe
+  _AIL_sample_status@4                          <- Focom.exe
+  _AIL_set_DirectSound_HWND@8                   <- Focom.exe
+  _AIL_set_named_sample_file@20                 <- Focom.exe
+  _AIL_set_preference@8                         <- Focom.exe
+  _AIL_set_sample_file@12                       <- Focom.exe
+  _AIL_set_sample_loop_count@8                  <- Focom.exe
+  _AIL_set_sample_pan@8                         <- Focom.exe
+  _AIL_set_sample_playback_rate@8               <- Focom.exe
+  _AIL_set_sample_volume@8                      <- Focom.exe
+  _AIL_shutdown@0                               <- Focom.exe
+  _AIL_start_sample@4                           <- Focom.exe
+  _AIL_startup@0                                <- Focom.exe
+  _AIL_waveOutClose@4                           <- Focom.exe
+  _AIL_waveOutOpen@16                           <- Focom.exe
+
+ole32.dll (3 unique functions):
+  CoCreateInstance                              <- Focom.exe
+  CoInitialize                                  <- Focom.exe
+  CoUninitialize                                <- Focom.exe
