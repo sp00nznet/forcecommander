@@ -30,6 +30,12 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
+/* For D3DDEVICEDESC7 and the device GUIDs. The struct carries no pointers, so
+ * its 32- and 64-bit layouts are identical (236 bytes, checked against the
+ * header with offsetof) and a host-built one copies straight into target
+ * memory. Filling 60 fields by hand offset would be the alternative. */
+#define DIRECT3D_VERSION 0x0700
+#include <d3d.h>
 
 #include "recomp_types.h"
 #include "imports.h"
@@ -459,32 +465,79 @@ static void dd_GetAvailableVidMem(void) {
 
 /*
  * EnumDisplayModes has to call back INTO lifted code, which is the other
- * direction across the boundary and the only place here that needs it. One
- * mode is offered: the one that is implemented.
+ * direction across the boundary.
+ *
+ * The descriptor is a DDSURFACEDESC2, because the game reached this through
+ * IDirectDraw7. In the 32-bit ABI that is 124 bytes -- NOT the 108 this used to
+ * report, which is DDSURFACEDESC version 1. (The header's sizeof is 136 on a
+ * 64-bit build: lpSurface is a pointer, so the 64-bit layout is 8 bytes longer
+ * and every field after +0x24 moves. The offsets below are the 32-bit ones and
+ * are what the original shim already used -- only the size and the flags were
+ * from the wrong version.)
+ *
+ * A LIST of modes is offered rather than one. The game picks a mode from what
+ * it is given and configures its renderer around it; offered a single mode that
+ * happens not to match what it wants, it has nothing to choose.
  */
-static void dd_EnumDisplayModes(void) {
-    uint32_t ctx = ARG(3), cb = ARG(4);
-    if (cb) {
-        uint32_t d = crt_alloc(0x6C);
-        for (uint32_t i = 0; i < 0x6C; i += 4) MEM32(d + i) = 0;
-        MEM32(d + 0x00) = 0x6C;
-        MEM32(d + 0x04) = 0x0000000F;
-        MEM32(d + 0x08) = (uint32_t)g_mode_h;
-        MEM32(d + 0x0C) = (uint32_t)g_mode_w;
-        MEM32(d + 0x10) = (uint32_t)(g_mode_w * (g_mode_bpp / 8));
-        MEM32(d + 0x48) = 32;
-        MEM32(d + 0x4C) = 0x40;
-        MEM32(d + 0x54) = (uint32_t)g_mode_bpp;
-        MEM32(d + 0x58) = 0xF800; MEM32(d + 0x5C) = 0x07E0; MEM32(d + 0x60) = 0x001F;
+#define DDSD2_SIZE 0x7C
 
-        recomp_func_t f = recomp_lookup(cb);
-        if (f) {
+static void dd_mode_desc(uint32_t d, uint32_t w, uint32_t h, uint32_t bpp) {
+    for (uint32_t i = 0; i < DDSD2_SIZE; i += 4) MEM32(d + i) = 0;
+    MEM32(d + 0x00) = DDSD2_SIZE;
+    /* CAPS|HEIGHT|WIDTH|PITCH|PIXELFORMAT|REFRESHRATE */
+    MEM32(d + 0x04) = 0x1 | 0x2 | 0x4 | 0x8 | 0x1000 | 0x40000;
+    MEM32(d + 0x08) = h;
+    MEM32(d + 0x0C) = w;
+    MEM32(d + 0x10) = w * (bpp / 8);          /* lPitch */
+    MEM32(d + 0x18) = 60;                     /* dwRefreshRate */
+    MEM32(d + 0x48) = 32;                     /* ddpfPixelFormat.dwSize */
+    MEM32(d + 0x4C) = 0x40;                   /* DDPF_RGB */
+    MEM32(d + 0x54) = bpp;                    /* dwRGBBitCount */
+    if (bpp == 16) {
+        MEM32(d + 0x58) = 0xF800;             /* 5-6-5 */
+        MEM32(d + 0x5C) = 0x07E0;
+        MEM32(d + 0x60) = 0x001F;
+    } else {
+        MEM32(d + 0x58) = 0x00FF0000;         /* 8-8-8 */
+        MEM32(d + 0x5C) = 0x0000FF00;
+        MEM32(d + 0x60) = 0x000000FF;
+    }
+    MEM32(d + 0x68) = 0x00000200;             /* ddsCaps: DDSCAPS_PRIMARYSURFACE */
+}
+
+static void dd_EnumDisplayModes(void) {
+    static const struct { uint32_t w, h; } modes[] = {
+        {640, 480}, {800, 600}, {1024, 768}, {1280, 1024},
+    };
+    static const uint32_t depths[] = {16, 32};
+    uint32_t ctx = ARG(3), cb = ARG(4);
+    recomp_func_t f = cb ? recomp_lookup(cb) : NULL;
+    if (!f) {
+        if (cb) fprintf(stderr, "[dd] EnumDisplayModes: callback 0x%08X is not "
+                                "in the dispatch table\n", cb);
+        RET(DD_OK); STDRET(5); return;
+    }
+    uint32_t d = crt_alloc(DDSD2_SIZE);
+    unsigned offered = 0;
+    for (unsigned m = 0; m < sizeof modes / sizeof modes[0]; m++) {
+        for (unsigned b = 0; b < 2; b++) {
+            dd_mode_desc(d, modes[m].w, modes[m].h, depths[b]);
+            uint32_t save = g_esp, save_fn = g_cur_func;
             PUSH32(g_esp, ctx);
             PUSH32(g_esp, d);
             PUSH32(g_esp, RECOMP_RETADDR);
             f();                      /* the callback's `ret 8` balances it */
+            g_cur_func = save_fn;
+            if (g_esp != save) g_esp = save;
+            offered++;
+            if (g_eax == 0) {         /* DDENUMRET_CANCEL: it has seen enough */
+                fprintf(stderr, "[dd] EnumDisplayModes -> %u modes, cancelled\n",
+                        offered);
+                RET(DD_OK); STDRET(5); return;
+            }
         }
     }
+    fprintf(stderr, "[dd] EnumDisplayModes -> %u modes offered\n", offered);
     RET(DD_OK); STDRET(5);
 }
 static void dd_EnumSurfaces(void) { RET(DD_OK); STDRET(5); }
@@ -1057,11 +1110,129 @@ uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name) {
  */
 static uint32_t g_vtbl_d3d, g_vtbl_d3ddev;
 
+/*
+ * IDirect3D7::EnumDevices(callback, context).
+ *
+ * This used to offer nothing, on the reasoning that the caller's own "no
+ * hardware device" path beat a fabricated description. The trace disagreed:
+ * with no device the game has nothing to render with, and RE3D's driver object
+ * comes back NULL -- sub_006BF7B0 then read [esi+0x30] off a null `this`. It is
+ * the same shape as the DirectDraw enumeration (blocker #10 in
+ * docs/STL-GATE.md): reporting success without calling back leaves an empty
+ * list, and an empty list is not the same answer as "no hardware".
+ *
+ * One device is offered, the RGB software rasteriser, because that is the one
+ * whose semantics this shim layer can actually honour -- RECON.md's finding
+ * that RE3D has a CDD7MemRenderer is what makes a software device the honest
+ * choice. Caps are set to what a complete DX7 software rasteriser reports.
+ *
+ * ponytail: one device, generous caps. Offer the HAL device too if the game
+ * turns out to insist on one, and expect it to ask for things this layer does
+ * not implement when it does.
+ */
 static void d3d_EnumDevices(void) {
-    /* Offer no devices: the caller's own "no hardware device" path is better
-     * than a fabricated device description it will then try to use. If the
-     * game needs one, this is where it goes, and the trace will say so. */
-    fprintf(stderr, "[d3d] EnumDevices -> no devices offered\n");
+    uint32_t cb = ARG(1), ctx = ARG(2);
+    recomp_func_t f = recomp_lookup(cb);
+    if (!f) {
+        fprintf(stderr, "[d3d] EnumDevices: callback 0x%08X is not in the "
+                        "dispatch table\n", cb);
+        RET(DD_OK); STDRET(3); return;
+    }
+
+    D3DDEVICEDESC7 d;
+    memset(&d, 0, sizeof d);
+    d.dwDevCaps = D3DDEVCAPS_FLOATTLVERTEX | D3DDEVCAPS_EXECUTESYSTEMMEMORY
+                | D3DDEVCAPS_TLVERTEXSYSTEMMEMORY | D3DDEVCAPS_TEXTURESYSTEMMEMORY
+                | D3DDEVCAPS_DRAWPRIMTLVERTEX | D3DDEVCAPS_DRAWPRIMITIVES2
+                | D3DDEVCAPS_DRAWPRIMITIVES2EX | D3DDEVCAPS_HWRASTERIZATION;
+    d.dwDeviceRenderBitDepth  = DDBD_16 | DDBD_24 | DDBD_32;
+    d.dwDeviceZBufferBitDepth = DDBD_16 | DDBD_32;
+    d.dwMinTextureWidth = d.dwMinTextureHeight = 1;
+    d.dwMaxTextureWidth = d.dwMaxTextureHeight = 2048;
+    d.dwMaxTextureRepeat = 2048;
+    d.dwMaxTextureAspectRatio = 2048;
+    d.dwMaxAnisotropy = 1;
+    d.dvGuardBandLeft = -32768.0f;  d.dvGuardBandTop    = -32768.0f;
+    d.dvGuardBandRight = 32768.0f;  d.dvGuardBandBottom =  32768.0f;
+    d.dwFVFCaps = 8;                       /* texture coordinate sets */
+    d.dwTextureOpCaps = D3DTEXOPCAPS_DISABLE | D3DTEXOPCAPS_SELECTARG1
+                      | D3DTEXOPCAPS_SELECTARG2 | D3DTEXOPCAPS_MODULATE
+                      | D3DTEXOPCAPS_MODULATE2X | D3DTEXOPCAPS_ADD
+                      | D3DTEXOPCAPS_BLENDDIFFUSEALPHA
+                      | D3DTEXOPCAPS_BLENDTEXTUREALPHA;
+    d.wMaxTextureBlendStages = 8;
+    d.wMaxSimultaneousTextures = 1;        /* the software rasteriser's answer */
+    d.dwMaxActiveLights = 8;
+    d.dvMaxVertexW = 1.0e10f;
+    /* IID_IDirect3DRGBDevice, written out rather than referenced: d3d.h only
+     * DECLARES it and the definition lives in dxguid.lib. */
+    static const GUID rgb_device =
+        {0xA4665C60,0x2673,0x11CF,{0xA3,0x1A,0x00,0xAA,0x00,0xB9,0x33,0x56}};
+    d.deviceGUID = rgb_device;
+
+    /* Both D3DPRIMCAPS describe the same rasteriser. */
+    D3DPRIMCAPS pc;
+    memset(&pc, 0, sizeof pc);
+    pc.dwSize = sizeof pc;
+    pc.dwMiscCaps = D3DPMISCCAPS_CULLNONE | D3DPMISCCAPS_CULLCW
+                  | D3DPMISCCAPS_CULLCCW | D3DPMISCCAPS_MASKZ;
+    pc.dwRasterCaps = D3DPRASTERCAPS_DITHER | D3DPRASTERCAPS_ZTEST
+                    | D3DPRASTERCAPS_FOGVERTEX | D3DPRASTERCAPS_FOGTABLE
+                    | D3DPRASTERCAPS_SUBPIXEL | D3DPRASTERCAPS_ZBIAS;
+    pc.dwZCmpCaps = D3DPCMPCAPS_NEVER | D3DPCMPCAPS_LESS | D3DPCMPCAPS_EQUAL
+                  | D3DPCMPCAPS_LESSEQUAL | D3DPCMPCAPS_GREATER
+                  | D3DPCMPCAPS_NOTEQUAL | D3DPCMPCAPS_GREATEREQUAL
+                  | D3DPCMPCAPS_ALWAYS;
+    pc.dwSrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE
+                      | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA
+                      | D3DPBLENDCAPS_SRCCOLOR | D3DPBLENDCAPS_INVSRCCOLOR
+                      | D3DPBLENDCAPS_DESTCOLOR | D3DPBLENDCAPS_INVDESTCOLOR
+                      | D3DPBLENDCAPS_DESTALPHA | D3DPBLENDCAPS_INVDESTALPHA;
+    pc.dwDestBlendCaps = pc.dwSrcBlendCaps;
+    pc.dwAlphaCmpCaps = pc.dwZCmpCaps;
+    pc.dwShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB | D3DPSHADECAPS_SPECULARGOURAUDRGB
+                   | D3DPSHADECAPS_ALPHAGOURAUDBLEND | D3DPSHADECAPS_FOGGOURAUD;
+    pc.dwTextureCaps = D3DPTEXTURECAPS_PERSPECTIVE | D3DPTEXTURECAPS_ALPHA
+                     | D3DPTEXTURECAPS_TRANSPARENCY | D3DPTEXTURECAPS_POW2
+                     | D3DPTEXTURECAPS_ALPHAPALETTE;
+    pc.dwTextureFilterCaps = D3DPTFILTERCAPS_NEAREST | D3DPTFILTERCAPS_LINEAR
+                           | D3DPTFILTERCAPS_MIPNEAREST | D3DPTFILTERCAPS_MIPLINEAR
+                           | D3DPTFILTERCAPS_LINEARMIPNEAREST
+                           | D3DPTFILTERCAPS_LINEARMIPLINEAR
+                           | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR
+                           | D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR;
+    pc.dwTextureBlendCaps = D3DPTBLENDCAPS_DECAL | D3DPTBLENDCAPS_MODULATE
+                          | D3DPTBLENDCAPS_DECALALPHA | D3DPTBLENDCAPS_MODULATEALPHA
+                          | D3DPTBLENDCAPS_COPY | D3DPTBLENDCAPS_ADD;
+    pc.dwTextureAddressCaps = D3DPTADDRESSCAPS_WRAP | D3DPTADDRESSCAPS_MIRROR
+                            | D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_INDEPENDENTUV;
+    d.dpcLineCaps = pc;
+    d.dpcTriCaps  = pc;
+
+    uint32_t desc = crt_alloc(64), name = crt_alloc(32);
+    uint32_t dd   = crt_alloc(sizeof d);
+    strcpy((char*)(uintptr_t)ADDR(desc), "Microsoft Direct3D RGB Software Emulation");
+    strcpy((char*)(uintptr_t)ADDR(name), "RGB Emulation");
+    memcpy((void*)(uintptr_t)ADDR(dd), &d, sizeof d);
+
+    fprintf(stderr, "[d3d] EnumDevices -> RGB Emulation (desc %u bytes at 0x%08X)\n",
+            (unsigned)sizeof d, dd);
+
+    /* stdcall, pushed right to left, then the dummy return address the
+     * callback's own `ret` will pop. D3DENUMRET_OK means "keep going". */
+    uint32_t save = g_esp, save_fn = g_cur_func;
+    PUSH32(g_esp, ctx);
+    PUSH32(g_esp, dd);
+    PUSH32(g_esp, name);
+    PUSH32(g_esp, desc);
+    PUSH32(g_esp, RECOMP_RETADDR);
+    f();
+    g_cur_func = save_fn;
+    if (g_esp != save) {
+        fprintf(stderr, "[d3d] EnumDevices callback left esp at 0x%08X,"
+                        " expected 0x%08X\n", g_esp, save);
+        g_esp = save;
+    }
     RET(DD_OK); STDRET(3);
 }
 
