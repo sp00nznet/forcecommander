@@ -28,6 +28,7 @@ add_executable(focom
   src/runtime/stl_shims.c
   src/runtime/ddraw_shims.c
   ${CMAKE_SOURCE_DIR}/../tools/runtime/recomp32/image_loader.c
+  ${CMAKE_SOURCE_DIR}/../tools/runtime/recomp32/recomp_trace.c
   ${GEN_SOURCES}
 )
 

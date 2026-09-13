@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 #include "recomp_types.h"
+#include "recomp_trace.h"
 #include "imports.h"
 #include "image_loader.h"
 
@@ -40,163 +41,19 @@ uint32_t  g_cur_func = 0;
 uint32_t  g_icall_trace[ICALL_TRACE_SIZE] = {0};
 uint32_t  g_icall_trace_idx = 0;
 uint32_t  g_icall_count = 0;
-#ifdef RECOMP_TRACE
-uint32_t  g_enter_trace[RECOMP_ENTER_SIZE] = {0};
-uint32_t  g_enter_idx = 0;
-/* --calltrace writes every lifted-function entry to a file. The entry ring
- * only holds the last 1024, and when a startup path loops the interesting
- * call -- the one that failed -- has already rolled out of it. */
-FILE* g_calltrace = NULL;
-/* --watch VA prints the machine state and the object under ecx every time a
- * given lifted function is entered. Reading the generated C tells you which
- * member is dereferenced; only a run tells you what is in it. */
+/* The generic bring-up diagnostics -- --calltrace, --firsthit, --argtrace,
+ * --watch, --poison, --poke -- live in the toolkit now (recomp_trace.c), so
+ * the next target gets them without writing them again. What stays here is
+ * what only makes sense for this binary. */
 int g_list_stubs = 0;
 extern int g_no_threads;
 extern int g_threadtrace;
+extern int g_shim_trace;
+extern unsigned g_wait_scale;
+extern uint32_t g_stlwatch;
 void mach_init(void);
 void mach_enter(void);
 void mach_leave(void);
-extern int g_shim_trace;
-extern unsigned g_wait_scale;
-uint32_t g_poison = 0;
-int g_poison_hit = 0;
-uint32_t g_poison_last = 0;
-uint32_t g_poison_val = 0;
-extern uint32_t g_stlwatch;
-extern const char* g_cur_import;
-uint32_t g_watch[8];
-unsigned g_watch_n = 0;
-
-/*
- * --firsthit LO HI: the first entry to each distinct function in [LO,HI),
- * printed in order with the thread that got there.
- *
- * A full --calltrace answers "what ran", but at 7.9 million lines it is slower
- * than the thing being measured, and the question during bring-up is almost
- * always narrower: did execution ever reach THIS subsystem, and in what order.
- * One bit per 4-byte-aligned address over the chosen window costs a range
- * check and a bit test per call, so it can be left on for a whole run.
- */
-static uint32_t g_fh_lo, g_fh_hi;
-static uint8_t* g_fh_seen;
-
-/* --argtrace VA: one line per entry to VA with its first three stack
- * arguments. A --watch line is 7 lines of registers and object dump, which is
- * the wrong shape when the question is "what sequence of ids went through this
- * one dispatcher". */
-static uint32_t g_at[4];
-static unsigned g_at_n;
-
-/* --watchspan LO HI narrows or moves the [ecx+..] window a --watch dumps. */
-static int g_wlo = 0, g_whi = 0xA0;
-
-/*
- * --poke ADDR VAL VA writes one byte the first time VA is entered.
- *
- * Games turn their own diagnostics off. Focom's assert and log machinery is
- * live in the retail build -- 2,500 report sites test a byte at 0x00833878
- * that the image initialises to 1 -- but startup overwrites it from a setting
- * that is absent, so every report is skipped. Poking the byte back after
- * startup turns the developers' own diagnostics on, and a "write this flag
- * once execution has got past the code that clears it" primitive is the
- * general shape of that.
- *
- * ponytail: one byte, one site, no restore. Nothing has needed a dword or a
- * second poke.
- */
-static uint32_t g_poke_addr, g_poke_at;
-static uint8_t g_poke_val;
-static int g_poke_done;
-
-void recomp_trace_enter(uint32_t va) {
-    if (g_poke_at && !g_poke_done && va == g_poke_at) {
-        g_poke_done = 1;
-        MEM8(g_poke_addr) = g_poke_val;
-        fprintf(stderr, "[poke] MEM8(0x%08X) = %u on entry to 0x%08X\n",
-                g_poke_addr, g_poke_val, va);
-    }
-    /* Keep the ring backtrace fed: recomp_dump_trace is what prints a call
-     * path after a fault, and a diagnostic that has quietly stopped recording
-     * is worse than none. */
-    g_enter_trace[g_enter_idx++ & (RECOMP_ENTER_SIZE - 1)] = va;
-    if (g_fh_seen && va >= g_fh_lo && va < g_fh_hi) {
-        uint32_t i = (va - g_fh_lo) >> 2;
-        if (!(g_fh_seen[i >> 3] & (1u << (i & 7)))) {
-            g_fh_seen[i >> 3] |= (uint8_t)(1u << (i & 7));
-            fprintf(stderr, "[first] t%lu 0x%08X\n", GetCurrentThreadId(), va);
-        }
-    }
-    /* Tagged with the thread, because the trace interleaves the game's own
-     * worker threads with the main one and a flat sequence cannot be read. */
-    for (unsigned t = 0; t < g_at_n; t++)
-        if (g_at[t] == va)
-            fprintf(stderr, "[args] t%lu %08X %08X %08X %08X\n",
-                    GetCurrentThreadId(), va,
-                    MEM32(g_esp + 4), MEM32(g_esp + 8), MEM32(g_esp + 12));
-    if (g_calltrace) fprintf(g_calltrace, "%lu %08X\n",
-                             GetCurrentThreadId(), va);
-    /* --poison ADDR reports the first moment a target dword turns into the
-     * high half of a 64-bit host pointer (0x00007FFx). That only happens when a
-     * shim stores a host pointer into target memory, and pairing it with
-     * g_cur_import names which shim did it. */
-    if (g_poison) {
-        uint32_t v = MEM32(g_poison);
-        if (v != g_poison_last && g_poison_hit < 400
-            && (!g_poison_val || v == g_poison_val)) {
-            g_poison_hit++;
-            fprintf(stderr, "[poison] 0x%08X: 0x%08X -> 0x%08X on entry to"
-                            " 0x%08X (last import %s)\n",
-                    g_poison, g_poison_last, v, va, g_cur_import);
-            g_poison_last = v;
-        }
-    }
-    for (unsigned w = 0; w < g_watch_n; w++) {
-        if (g_watch[w] != va) continue;
-        fprintf(stderr, "[watch] 0x%08X ecx=%08X ebx=%08X eax=%08X esi=%08X"
-                        " edi=%08X esp=%08X args:", va, g_ecx, g_ebx, g_eax,
-                g_esi, g_edi, g_esp);
-        for (int k = 4; k <= 0x20; k += 4) fprintf(stderr, " %08X", MEM32(g_esp + k));
-        fprintf(stderr, "\n");
-        /* The object under ecx, 0x00..0x9C: wide enough for the vptr, the
-         * embedded base subobjects and the members the bring-up cares
-         * about, without needing a recompile per field. */
-        if (g_ecx >= 0x00200000u)
-            for (int row = g_wlo; row < g_whi; row += 0x20) {
-                fprintf(stderr, "[watch]   [ecx+%02X]:", row);
-                for (int k = 0; k < 0x20; k += 4)
-                    fprintf(stderr, " %08X", MEM32(g_ecx + row + k));
-                fprintf(stderr, "\n");
-            }
-        {   /* identify the object at +0x94 by its vptr */
-            uint32_t o = MEM32(g_ecx + 0x94);
-            fprintf(stderr, "[watch]   [ecx+0x94]=0x%08X vptr=0x%08X\n",
-                    o, o >= 0x00200000u ? MEM32(o) : 0);
-        }
-        {   /* the process array at [ecx+0xC], 16 slots */
-            uint32_t arr = MEM32(g_ecx + 0xC);
-            if (arr >= 0x00200000u) {
-                fprintf(stderr, "[watch]   procs@0x%08X:", arr);
-                for (int q = 0; q < 16; q++)
-                    fprintf(stderr, " %08X", MEM32(arr + q * 4));
-                fprintf(stderr, "\n");
-            }
-        }
-    }
-}
-#endif
-void recomp_dump_trace(const char* why) {
-#ifdef RECOMP_TRACE
-    fprintf(stderr, "=== entry trace (%s) ===\n", why ? why : "");
-    int depth = (g_enter_idx < RECOMP_ENTER_SIZE) ? (int)g_enter_idx
-                                                : RECOMP_ENTER_SIZE;
-    for (int i = depth; i > 0; i--) {
-        uint32_t idx = (g_enter_idx - i) & (RECOMP_ENTER_SIZE - 1);
-        if (g_enter_trace[idx]) fprintf(stderr, "  0x%08X\n", g_enter_trace[idx]);
-    }
-#else
-    (void)why;
-#endif
-}
 
 /* Target memory layout, from pe_analyze on Focom.exe. */
 #define FOCOM_IMAGE_BASE  0x00400000u
@@ -270,7 +127,6 @@ static void resolve_imports(void) {
 /* The name of the import the machine is inside. A fault in a host DLL means a
  * shim handed Windows a bad pointer, and without this the only evidence is an
  * address in msvcrt.dll that names neither the shim nor the caller. */
-const char* g_cur_import = "(none)";
 
 recomp_func_t recomp_lookup_import(uint32_t va) {
     if (!g_resolved_done) resolve_imports();
@@ -575,7 +431,7 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
         fprintf(stderr, "  faulting module: %s +0x%llX\n", mn,
                 (unsigned long long)((uintptr_t)r->ExceptionAddress - (uintptr_t)fm));
     }
-    if (g_calltrace) fflush(g_calltrace);
+    recomp_trace_flush();
     fprintf(stderr, "current lifted function: 0x%08X\n", g_cur_func);
     fprintf(stderr, "last import entered: %s\n", g_cur_import);
     fprintf(stderr, "eax=%08X ecx=%08X edx=%08X ebx=%08X\n", g_eax, g_ecx, g_edx, g_ebx);
@@ -597,6 +453,8 @@ int main(int argc, char** argv) {
     int run = 0, splash = 0, shot = 0;
     const char* shot_path = NULL;
     for (int i = 1; i < argc; i++) {
+        int n = recomp_trace_arg(argc, argv, i);   /* the toolkit ones */
+        if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--waitscale") && i + 1 < argc)
             g_wait_scale = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
@@ -604,38 +462,9 @@ int main(int argc, char** argv) {
             g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
-        else if (!strcmp(argv[i], "--poison") && i + 1 < argc)
-            g_poison = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--stlwatch") && i + 1 < argc)
             g_stlwatch = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--poisonval") && i + 1 < argc)
-            g_poison_val = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--watch") && i + 1 < argc && g_watch_n < 8)
-            g_watch[g_watch_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
-        else if (!strcmp(argv[i], "--poke") && i + 3 < argc) {
-            g_poke_addr = (uint32_t)strtoul(argv[++i], NULL, 0);
-            g_poke_val = (uint8_t)strtoul(argv[++i], NULL, 0);
-            g_poke_at = (uint32_t)strtoul(argv[++i], NULL, 0);
-        }
-        else if (!strcmp(argv[i], "--watchspan") && i + 2 < argc) {
-            g_wlo = (int)strtoul(argv[++i], NULL, 0) & ~0x1F;
-            g_whi = (int)strtoul(argv[++i], NULL, 0);
-        }
-        else if (!strcmp(argv[i], "--argtrace") && i + 1 < argc && g_at_n < 4)
-            g_at[g_at_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
-        else if (!strcmp(argv[i], "--firsthit") && i + 2 < argc) {
-            g_fh_lo = (uint32_t)strtoul(argv[++i], NULL, 0);
-            g_fh_hi = (uint32_t)strtoul(argv[++i], NULL, 0);
-            if (g_fh_hi > g_fh_lo)
-                g_fh_seen = (uint8_t*)calloc(((g_fh_hi - g_fh_lo) >> 5) + 1, 1);
-        }
-        else if (!strcmp(argv[i], "--calltrace") && i + 1 < argc)
-            g_calltrace = fopen(argv[++i], "w"),
-            /* 4 MB of buffer: unbuffered made the trace slower than the code
-             * it was tracing (7.9 M calls a run). The fault handler and the
-             * exit path both flush, so the tail still survives a crash. */
-            g_calltrace ? setvbuf(g_calltrace, NULL, _IOFBF, 4u << 20) : 0;
         else if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--splash")) splash = 1;
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
