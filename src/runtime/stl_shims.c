@@ -119,8 +119,20 @@ static int s_ptr_ok(uint32_t p) {
     if (p == g_nullstr) return 1;
     if (p < S_LOW || p >= S_HIGH) return 0;
     if (p < 0x10000000u) return 1;              /* a stack buffer: unowned */
-    /* +17 so the size header at p-1-16 is inside the heap and not a read of
-     * unmapped memory below it. */
+    /*
+     * The sharpest test available, and it is one instruction: crt_alloc hands
+     * back 16-byte-aligned payloads and buf_new returns payload + 1 (the byte
+     * before the data is the refcount MSVC 6 keeps at _Ptr[-1]), so every real
+     * string buffer is congruent to 1 mod 16.
+     *
+     * This is what rejects 0x1014AB20 -- congruent to 0, and in fact the
+     * address of the live GamePPProdBase object rather than a buffer at all.
+     * A size-header check could not: the header for a fabricated pointer lands
+     * inside some other allocation's payload and passes as often as not.
+     */
+    if ((p & 15u) != 1u) return 0;
+    /* -17 must still be inside the heap, and the recorded size must be one
+     * buf_new could have asked for. */
     if (p < 0x10000011u || p + 1 >= crt_heap_end()) return 0;
     uint32_t sz = crt_size_of(p - 1);           /* buf_new asked for cap + 2 */
     return sz >= 2 && sz < S_MAXLEN;
@@ -131,6 +143,15 @@ static int s_bad(uint32_t o) {
     uint32_t p = S_PTR(o);
     return (p && !s_ptr_ok(p)) || S_LEN(o) > S_MAXLEN;
 }
+
+/* True when the object owns storage that can be written through. Since _Tidy
+ * leaves _Ptr == 0, "not the shared empty buffer" is no longer the same
+ * question as "has a buffer". */
+static int s_has_buf(uint32_t o) {
+    uint32_t p = S_PTR(o);
+    return p && p != g_nullstr && s_ptr_ok(p);
+}
+
 
 
 /*
@@ -203,7 +224,7 @@ static void s_reserve(uint32_t o, uint32_t need) {
                 need, o, o >= S_LOW && o < S_HIGH ? S_PTR(o) : 0, g_cur_func);
         return;
     }
-    if (S_RES(o) >= need && S_PTR(o) != g_nullstr) return;
+    if (S_RES(o) >= need && s_has_buf(o)) return;
     uint32_t cap = S_RES(o) ? S_RES(o) : 15;
     while (cap < need) cap = cap * 2 + 1;
     uint32_t len = S_LEN(o);
@@ -236,7 +257,7 @@ static void s_assign(uint32_t o, const char* src, uint32_t n) {
     if (!s_dst_ok(o, "assign")) return;
     if (!n) { s_empty(o); return; }
     s_reserve(o, n);
-    if (S_PTR(o) == g_nullstr) return;
+    if (!s_has_buf(o)) return;
     memcpy(s_src(o, NULL), src, n);
     MEM8(S_PTR(o) + n) = 0;
     S_LEN(o) = n;
@@ -247,7 +268,7 @@ static void s_append(uint32_t o, const char* src, uint32_t n) {
     if (!s_dst_ok(o, "append")) return;
     uint32_t len = S_LEN(o);
     s_reserve(o, len + n);
-    if (S_PTR(o) == g_nullstr) return;
+    if (!s_has_buf(o)) return;
     memcpy(s_src(o, NULL) + len, src, n);
     MEM8(S_PTR(o) + len + n) = 0;
     S_LEN(o) = len + n;
@@ -331,7 +352,7 @@ static void s_append_n_ch(void) {
     char c = (char)ARG(1);
     uint32_t len = S_LEN(THIS);
     s_reserve(THIS, len + n);
-    if (S_PTR(THIS) != g_nullstr) {
+    if (s_has_buf(THIS)) {
         memset(s_src(THIS, NULL) + len, c, n);
         MEM8(S_PTR(THIS) + len + n) = 0;
         S_LEN(THIS) = len + n;
@@ -413,6 +434,11 @@ static void s_copy_out(void) {     /* copy(char* dst, size_t n, size_t pos) */
 /* -------------------------------------------------------- modifications */
 
 static void s_erase(void) {        /* erase(size_t pos, size_t n) */
+    /* Nothing to erase from a string with no storage, and erasing from one
+     * anyway wrote through s_src's read-only "" and put the terminator at
+     * address 0. Since _Tidy correctly leaves _Ptr == 0, every string starts
+     * its life in exactly that state. */
+    if (!s_has_buf(THIS)) { S_LEN(THIS) = 0; RET(THIS); STDRET(2); return; }
     uint32_t pos = ARG(0), n = ARG(1), len = S_LEN(THIS);
     if (pos > len) pos = len;
     if (n > len - pos) n = len - pos;
@@ -427,10 +453,10 @@ static void s_resize(void) {       /* resize(size_t n) -- pads with '\0' */
     uint32_t n = ARG(0), len = S_LEN(THIS);
     if (n > len) {
         s_reserve(THIS, n);
-        if (S_PTR(THIS) != g_nullstr)
+        if (s_has_buf(THIS))
             memset(s_src(THIS, NULL) + len, 0, n - len);
     }
-    if (S_PTR(THIS) != g_nullstr) {
+    if (s_has_buf(THIS)) {
         S_LEN(THIS) = n;
         MEM8(S_PTR(THIS) + n) = 0;
     }
@@ -478,13 +504,39 @@ static void s_substr(void) {
  * have to exist, but with copy-on-write turned off most of them are no-ops:
  * _Freeze and _Split exist to break sharing, and nothing is ever shared.
  */
-static void s_Tidy(void)   { if (!S_PTR(THIS)) s_empty(THIS); RET(THIS); STDRET(1); }
+/*
+ * _Tidy(bool _Built) -- MSVC 6's "make this object empty" primitive. It is used
+ * BOTH to construct a string and to destroy one, and it always ends
+ *
+ *     _Ptr = 0, _Len = 0, _Res = 0
+ *
+ * `_Built` only decides whether the buffer it currently holds is released
+ * first. The compiler emits `_Tidy(0)` as the inline constructor for a stack
+ * local, which is what makes the unconditional part load-bearing.
+ *
+ * The old body acted only when _Ptr was already 0, so a stack local whose _Ptr
+ * slot held leftover bytes kept them and every later write went through the
+ * garbage. That is where every "unconstructed string" in this project came
+ * from, including the one whose _Ptr was the address of the live
+ * GamePPProdBase object -- the next assign() wrote "Unloading..." over that
+ * object's vtable pointer, and the game faulted thousands of calls later
+ * making a virtual call through it.
+ */
+static void s_Tidy(void) {
+    uint32_t p = S_PTR(THIS);
+    if (ARG(0) && p && p != g_nullstr && s_ptr_ok(p) && MEM8(p - 1))
+        MEM8(p - 1) -= 1;                  /* shared buffer: drop a reference */
+    S_PTR(THIS) = 0;
+    S_LEN(THIS) = 0;
+    S_RES(THIS) = 0;
+    RET(THIS); STDRET(1);
+}
 static void s_Freeze(void) { RET(THIS); STDRET(0); }
 static void s_Split(void)  { RET(THIS); STDRET(0); }
 static void s_Refcnt(void) { RET(ARG(0) ? ARG(0) - 1 : g_nullstr); STDRET(1); }
 static void s_Eos(void) {
     uint32_t n = ARG(0);
-    if (S_PTR(THIS) != g_nullstr) { S_LEN(THIS) = n; MEM8(S_PTR(THIS) + n) = 0; }
+    if (s_has_buf(THIS)) { S_LEN(THIS) = n; MEM8(S_PTR(THIS) + n) = 0; }
     RET(THIS); STDRET(1);
 }
 static void s_Copy(void)   { s_reserve(THIS, ARG(0)); RET(THIS); STDRET(1); }
@@ -575,6 +627,27 @@ static void f_Xran(void) {
 
 /* iostream/locale: still stubs. Nothing on the startup path uses an fstream
  * for real, and a half-implemented streambuf is worse than an obvious no-op. */
+/*
+ * The iostream family is not implemented -- see stl_init_data_imports() -- but
+ * its constructors cannot be pure no-ops, because MSVC's virtual-inheritance
+ * layout has the caller read a vbptr straight back out of the object. So they
+ * store one.
+ */
+#define VB_DISP 8
+static uint32_t g_vbtable;
+
+static void ios_ctor0(void) { MEM32(THIS) = g_vbtable; RET(THIS); STDRET(0); }
+static void ios_ctor1(void) { MEM32(THIS) = g_vbtable; RET(THIS); STDRET(1); }
+/*
+ * A constructor for a class with a VIRTUAL BASE takes a hidden most-derived
+ * flag that the mangled name does not mention, so basic_iostream's purge is 2
+ * and not the 1 its single declared parameter suggests. Off by that one slot,
+ * the caller's `mov ecx, [esp+0x30]` read four bytes past `this` and used 0x3F
+ * as the vbptr. (docs/STL-GATE.md flags the mirror image of this: a by-value
+ * return adds a hidden pointer, making substr's purge 3 rather than 2.)
+ */
+static void ios_ctor2(void) { MEM32(THIS) = g_vbtable; RET(THIS); STDRET(2); }
+
 static void nop0(void) { RET(THIS); STDRET(0); }
 static void nop1(void) { RET(THIS); STDRET(1); }
 static void nop2(void) { RET(THIS); STDRET(2); }
@@ -585,6 +658,15 @@ static void nop2(void) { RET(THIS); STDRET(2); }
 #define IOS "?$basic_ios@DU?$char_traits@D@std@@@std@@"
 #define FBUF "?$basic_filebuf@DU?$char_traits@D@std@@@std@@"
 #define SBUF "?$basic_streambuf@DU?$char_traits@D@std@@@std@@"
+/* The same backreference trap as STRF vs STR. In a PARAMETER position `std` is
+ * already on the backref list, so the nested name ends `@1@` and not `@std@@`:
+ *
+ *   ??0?$basic_iostream@...@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z
+ *                                              this half is SBUFP ----^
+ *
+ * Spelled with SBUF the table entry never matched the import, so the
+ * basic_iostream constructor stayed a generated stub. */
+#define SBUFP "?$basic_streambuf@DU?$char_traits@D@std@@"
 #define FSTR "?$basic_fstream@DU?$char_traits@D@std@@@std@@"
 #define IOST "?$basic_iostream@DU?$char_traits@D@std@@@std@@"
 /* In a FREE function the enclosing std:: is a backref, so basic_string ends
@@ -662,15 +744,15 @@ const struct { const char* name; import_fn_t fn; } g_stl_shims[] = {
     { P "??0ios_base@std@@IAE@XZ",                  nop0 },
     { P "??1ios_base@std@@UAE@XZ",                  nop0 },
     { P "??1locale@std@@QAE@XZ",                    nop0 },
-    { P "??0" IOS "IAE@XZ",                         nop0 },
+    { P "??0" IOS "IAE@XZ",                         ios_ctor0 },
     { P "??1" IOS "UAE@XZ",                         nop0 },
     { P "??1" SBUF "UAE@XZ",                        nop0 },
     { P "??1" FBUF "UAE@XZ",                        nop0 },
     { P "??1" FSTR "UAE@XZ",                        nop0 },
     { P "??1" IOST "UAE@XZ",                        nop0 },
     { P "??_D" FSTR "QAEXXZ",                       nop0 },
-    { P "??0" FBUF "QAE@PAU_iobuf@@@Z",             nop1 },
-    { P "??0" IOST "QAE@PAV" SBUF "@1@@Z",          nop1 },
+    { P "??0" FBUF "QAE@PAU_iobuf@@@Z",             ios_ctor1 },
+    { P "??0" IOST "QAE@PAV" SBUFP "@1@@Z",         ios_ctor2 },
     { P "?close@" FBUF "QAEPAV12@XZ",               nop0 },
     { P "?open@" FBUF "QAEPAV12@PBDH@Z",            nop2 },
     { P "?clear@" IOS "QAEXH_N@Z",                  nop2 },
@@ -696,11 +778,32 @@ void stl_init_data_imports(void) {
     uint32_t vt = crt_alloc(64);       /* a shared all-zero stand-in vtable */
     memset((void*)(uintptr_t)ADDR(vt), 0, 64);
 
+    /*
+     * The `??_8` imports are not vtables, they are VIRTUAL BASE DISPLACEMENT
+     * tables, and basic_fstream has two of them because it inherits
+     * basic_istream and basic_ostream, which share a virtual basic_ios.
+     * The game reads entry [1] and uses it as an offset:
+     *
+     *     mov ecx, [esp+0x30]          ; the vbptr the constructor stored
+     *     mov edx, [ecx+4]             ; displacement of the basic_ios base
+     *     mov [esp+edx+0x38], eax      ; put basic_ios's vtable there
+     *
+     * so the table has to be real storage and entry [1] has to land somewhere
+     * inside the object. Pointed at the all-zero stand-in it read 0, which was
+     * survivable; pointed at nothing it read 0x3F and the game dereferenced
+     * 0x43. VB_DISP is deliberately small and aligned -- nothing in the nop'd
+     * iostream layer cares where the subobject sits, only that it is inside.
+     */
+    g_vbtable = crt_alloc(16);
+    memset((void*)(uintptr_t)ADDR(g_vbtable), 0, 16);
+    MEM32(g_vbtable + 4) = VB_DISP;
+
     for (unsigned i = 0; i < g_import_count; i++) {
         const char* n = g_imports[i].name;
         if (!g_imports[i].conv || strcmp(g_imports[i].conv, "data")) continue;
         if (strstr(n, "?npos@"))            MEM32(g_imports[i].iat_va) = npos;
         else if (strstr(n, "_Nullstr"))     MEM32(g_imports[i].iat_va) = g_nullstr;
+        else if (strstr(n, "??_8"))         MEM32(g_imports[i].iat_va) = g_vbtable;
         else                                MEM32(g_imports[i].iat_va) = vt;
     }
     printf("  npos=0x%08X nullstr=0x%08X\n", npos, g_nullstr);

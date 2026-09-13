@@ -400,6 +400,35 @@ void host_screenshot(const char* path) {
 
 /* ---------------------------------------------------------------- crash */
 
+/* --watchdog SECONDS: a host thread that reports where the machine is and stops
+ * the process. A hang leaves no fault to catch, and the entry-trace ring only
+ * moves while calls are being made -- a spin loop inside one function makes no
+ * calls at all, so the ring stops and looks like a crash that never came. The
+ * thread only READS the machine state, so it does not race it meaningfully. */
+static DWORD g_watchdog_s = 0;
+
+static DWORD WINAPI watchdog(LPVOID unused) {
+    (void)unused;
+    uint32_t last = 0;
+    unsigned quiet = 0;
+    for (;;) {
+        Sleep(1000);
+        if (g_enter_idx == last) quiet++; else quiet = 0;
+        last = g_enter_idx;
+        if (quiet < g_watchdog_s) continue;
+        fprintf(stderr, "\n=== watchdog: no lifted call for %u s ===\n", quiet);
+        fprintf(stderr, "spinning in: 0x%08X\n", g_cur_func);
+        fprintf(stderr, "eax=%08X ecx=%08X edx=%08X ebx=%08X\n",
+                g_eax, g_ecx, g_edx, g_ebx);
+        fprintf(stderr, "esp=%08X ebp=%08X esi=%08X edi=%08X\n",
+                g_esp, g_ebp, g_esi, g_edi);
+        fprintf(stderr, "last import entered: %s\n", g_cur_import);
+        recomp_dump_trace("watchdog");
+        fflush(stderr);
+        _exit(3);
+    }
+}
+
 static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
     EXCEPTION_RECORD* r = ep->ExceptionRecord;
     /* The host is linked at 0x140000000 with /FIXED:NO, so also print the
@@ -470,6 +499,8 @@ int main(int argc, char** argv) {
     const char* shot_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
+        else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc)
+            g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--poison") && i + 1 < argc)
             g_poison = (uint32_t)strtoul(argv[++i], NULL, 0);
@@ -491,6 +522,7 @@ int main(int argc, char** argv) {
     }
 
     AddVectoredExceptionHandler(1, veh);
+    if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
 
     printf("Force Commander recomp host\n");
     printf("  lifted functions in dispatch: %u\n", recomp_dispatch_count);

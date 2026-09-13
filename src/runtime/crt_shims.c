@@ -961,6 +961,8 @@ static void k32_CreateFileA(void) {
                 hp ? hp : "(null)", GetLastError());
         RET(0xFFFFFFFFu); STDRET(7); return;
     }
+    if (g_shim_trace)
+        fprintf(stderr, "[k32] CreateFileA(\"%s\") -> h=%u\n", hp, h2i(h));
     RET(h2i(h)); STDRET(7);
 }
 static void k32_ReadFile(void) {
