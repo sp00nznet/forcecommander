@@ -72,65 +72,128 @@ without a word.
 
 ## Where it stops today
 
-The game boots, loads, and starts its first mission. It then exits cleanly.
+The game boots, loads, starts its first section, runs that section for 61
+frames, and then exits cleanly. Nothing is drawn, and nothing goes wrong: no
+assertion fires and no error is reported anywhere in the run. The section
+finishes.
+
+### The chain, measured
 
 `Run 2 1 6` is `GamePPProdStartup` slot 19, forwarding to `GamePPProdBase`
-slot 61 (`sub_0051CE70`), which ends by calling slot 14 on the object at
-`GamePPProdBase + 0x94`. That object is the **GamePPVisProcessManager**
-(vtable 0x007C58B4), and slot 14 is `sub_0052B410` -- start a process.
+slot 61 (`sub_0051CE70`), which calls slot 14 on the object at
+`GamePPProdBase + 0x94` -- the **GamePPVisProcessManager** (vtable
+0x007C58B4). Slot 14 is `sub_0052B410`, "start a process".
 
-**The three numbers are an object template ID.** `.pro` files key `id` and
-`inheritID` as triples, and template `2 1 6` is `Trasse - Day/info.pro`: the
-opening mission. So the last live line of Focom.ini means "boot the Trasse
-mission", and it works -- the lookup scans the compiled template database,
-finds it, allocates, and registers a process.
+The three numbers are an object-template id: `.pro` files key `id` and
+`inheritID` as triples, and `2 1 6` is `Trasse - Day/info.pro`, whose
+`bootThread` is 102 and whose `inheritID` is `2 1 12` = `Endor - Dawn` -- the
+template every mission inherits from, and the one that actually carries the
+code. So the last live line of Focom.ini means "boot the Trasse section", and
+it works: the lookup finds the template, allocates, and registers a process in
+slot 0 of the manager's 16-slot array.
 
-What then happens, per `--calltrace` with thread tags:
+The process is started with a **boot thread** (`sub_00523980` stores that
+choice at `[proc+0x1B4]` and the Ronin `CThread` at `[proc+0x1B0]`), and a
+Ronin thread is one-shot: `sub_005510F0` calls the body once, stores the
+result, signals the completion event, and sets `[thr+0xC] = 0`. The process's
+own per-frame check, `sub_005263D0`, is then:
 
-| | |
-|---|---:|
-| main thread calls | 7,356,408 |
-| service thread calls | 6 (parked in its wait loop, correct) |
-| **mission process calls** | **590,206** |
-| object templates compiled | 1,713 |
-| `.rpk` reads | 288,585 |
-| heap high-water | 200 MB over 692,799 allocations |
+```
+if (![proc+0x1B4])  return proc->Update(...)        /* not a boot process */
+if (![proc+0x1B0] || ![[proc+0x1B0]+0xC])           /* boot thread finished */
+     manager->RemoveProcess(proc)
+return 1
+```
 
-The mission process is an OS thread. Its routine runs the mission's boot script
-to completion and returns; `sub_005510F0` then signals the process's completion
-event, the manager reaps the process, the live-process count
-(`sub_0052B6B0`, which counts non-null entries in a 16-slot array at
-`[mgr+0xC]`) drops to zero, the main thread's loop in `sub_005003CD` ends, and
-WinMain returns. `exit(0)` comes from `0x0056EB66` -- the CRT's
-`exit(WinMain(...))`. Nothing is wrong with the shutdown; the game finished
-what it was asked to do.
+So **the process lives exactly as long as its boot thread.** That is the
+design, not a bug.
 
-So the question is why the mission's script terminates instead of looping, and
-the honest answer is that it is not yet known. Two things are established:
+The boot thread's body is `CProcessThread::Tick` (`sub_00524A80`), which is
+`GetTickCount()`, a delta, and `process->Update(template, dt)` -- one frame.
+It ran **61 times** and then stopped, because `sub_005261C0` returned 0:
 
-- **It is not the frame tick.** `sub_0051D480` -- the base's slot 62, which the
-  loop calls with elapsed seconds -- runs exactly once, between the count
-  returning 1 and returning 0. The loop is willing to keep ticking; there is
-  nothing left to tick.
-- **It is not a wall-clock timeout.** Ronin's queue-consumer body
-  (`sub_005518C0`) is `WaitForSingleObject(mutex, 100)` and returns on timeout,
-  which looked like an obvious candidate given that this machine serialises
-  lifted code. `--waitscale 100` changes nothing, so that is not it.
+```
+alive = sub_00526A20(threads...) != 0  &&  [proc+0x258] == 0
+```
 
-What is suspicious is that **no Direct3D device is ever created.** The game
-enumerates one and accepts it -- `sub_0076ACC0` compares the offered
-`deviceGUID` against four it knows (TnLHal, HAL, RGB, Ref; RGB is offered and
-matches, landing in device slot `+0x44C`) -- then releases IDirect3D7 without
-calling `CreateDevice`, and never calls `SetDisplayMode`, `Lock`, `Blt` or
-`Flip`. A mission script whose first act is to set up rendering would explain
-both the absence of drawing and a script that ends early. That is the thread to
-pull next.
+`sub_00526A20` walks the section's script threads; when none of them has
+anything left to run, it returns 0. The section's script had finished.
 
-### A correction
+### The script trace
 
-An earlier version of this document said `GamePPProdBase + 0x94` was null at
-`Run` and named that as the cause. It is not null. That conclusion came from
-`--poison` on an address captured in a *different run*, and allocation order
-varies once the game's own threads are running. Read in a single run with
-`--watch`, the slot holds a live GamePPVisProcessManager. Poison and watch
-addresses are only comparable within one process.
+`tools/scriptmap.py` recovers the script-function registry from the lifted
+code -- every subsystem is registered with an id, a name and a help string, so
+156 is `If`, 384 is `String`, 821 is `Smush`, 900 is `Screen`, 936 is
+`Protocol@GamePPMultiplayer`, 940 is `RE3D`. `GamePPVisLibraryManager::
+GetLibrary` is `sub_0052C300`, a one-argument lookup into a 1024-entry table,
+so
+
+```
+focom.exe game/Focom.exe --run --argtrace 0x0052C300
+```
+
+prints the subsystem each script line calls. Two threads run script: 3,440
+dispatches on the boot thread and 1,734 on a second. The boot thread's script
+uses `Message` (314), `Text Bounds` (281), `Mouse` (185), `String` (172),
+`RE3D` (169), `Protocol` (120), `RE3DStage` (115), `Smush` (12), `Wait If`
+(12), `Wait Forever` (6), `Wait` (3), `Stop` (3) -- a front end, driving a 2D
+interface over 61 frames.
+
+`Wait Forever` works: `GamePPGlobalSysWaitForever::Execute` (`sub_005D48F0`)
+sets bit 2 of the context's flag word at `+0x30`, and the interpreter's
+line-runner `sub_00512170` reads it back and returns 0 for "do not advance".
+The idiom it uses is `and al,0x14 / neg al / sbb eax,eax / inc eax`, which
+needs NEG's carry -- the lifter emits it (that fix predates this work), and
+the lifted C is correct. A parked thread yields to the next script thread,
+which is why lines keep running after it.
+
+The script's last dispatch is subsystem **936, `Protocol@GamePPMultiplayer`**,
+and the last shim call in the whole run is `IDirectPlayLobby::
+GetConnectionSettings`, which answers `DPERR_NOTLOBBIED` -- the correct answer
+for a launch that did not come from a lobby. Then the boot thread's body
+returns, the manager reaps the process, and WinMain returns.
+
+### What is not the cause
+
+Ruled out by measurement, so as not to be re-guessed:
+
+- **Not a null process manager.** `GamePPProdBase + 0x94` holds a live
+  GamePPVisProcessManager. An earlier note here said otherwise; that came from
+  a `--poison` address captured in a different run, and allocation order
+  varies once the game's own threads are up.
+- **Not thread starvation.** Coarse preemption of the machine lock (hand it
+  over every N function entries) was implemented and tried at N = 500, 5,000
+  and 50,000. No change: the main thread is not waiting, it has 7.8 million
+  calls of its own to make compiling 1,713 object templates out of 9,554
+  archive members while the worker runs the script.
+- **Not a wall-clock timeout.** `--waitscale 100` changes nothing.
+- **Not the frame tick.** `sub_0051D480`, the base's slot 62, is willing to
+  keep ticking; the loop ends because the live-process count goes to zero.
+- **Not an error the game noticed.** The game ships with its assert and log
+  machinery LIVE: ~2,500 sites test a byte at 0x00833878 and report through a
+  `std::fstream`. Startup clears that byte (it is set from a setting named
+  `permitSyncChecking`, which has to read `"on"`), so the reports were being
+  skipped; with the byte poked back on
+
+  ```
+  focom.exe game/Focom.exe --run --poke 0x00833878 1 0x0052C300
+  ```
+
+  the log file is opened and flushed three times and **nothing is ever
+  queued** -- `sub_00403900`, the report formatter, is entered zero times.
+
+### The open question
+
+No Direct3D device is ever created. RE3D gets as far as enumerating drivers and
+probing devices -- `CDD7Driver::CreateDevice` builds a 2,568-byte `CDD7Device`,
+enumerates 8 display modes, registers three renderers, and the whole thing is
+torn down again, which is what a probe pass looks like -- and then the screen
+code is never entered at all. The `Screen` subsystem's script API is `Init`,
+`Done`, `FullScreen(Width, Height, Bits Per Pixel)` and `Windowed(Width,
+Height)`; `CEngine@RE3D` slots 6, 8 and 10 are never called, and
+`CDD7WinScreen` / `CDD7FSScreen` never run.
+
+So the front end runs its 61 frames with no renderer and finishes. The next
+step is to find which `Screen` call the script makes and what it gets back:
+the function index is in the line record, not in the `GetLibrary` argument, so
+reading it needs one more hop than `--argtrace` currently gives.

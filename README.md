@@ -258,7 +258,7 @@ that to a 32-bit host, and the argument has only got stronger.
 
 ### Where it actually stops
 
-The game now runs **its own startup**, driven by its own script — see
+The game runs **its own startup**, driven by its own script -- see
 [`docs/STARTUP.md`](docs/STARTUP.md), which is the other thing that had to be
 recovered: `Focom.ini` is not a settings file but a directive list, and the disc
 ships it as zero bytes because the installer writes it.
@@ -266,21 +266,33 @@ ships it as zero bytes because the installer writes it.
 ```
 CheckAppMutex FORCE       -> CreateMutexA
 CheckCD <installdir>      -> GetVolumeInformationA, label FOCOM_1
-LoadAppFileName ...       -> reads Resourceppname.ini
+LoadAppFileName ...       -> reads Resource/appname.ini
 ShowLoadingPanel          -> CreateDialogParamA(101), dialog procedure
                              0x00401770 -- lifted -- and it paints
 InitBase                  -> builds GamePPProdBase, creates its registry key
+RPKDir / Workspace        -> opens forcecommand.rpk, 288,585 reads,
+                             compiles 1,713 object templates
+Movies / Music / GameFiles / Players
+Run 2 1 6                 -> starts the "Trasse - Day" section as a process
+                             on a Ronin worker thread
+HideLoadingPanel
 ```
 
-It stops in the construction of `GamePPSysLibrary` (vtable `0x007C4558`), which
-receives a `GamePPProdBase*` that points at string data.
+CreateThread is now honoured -- one thread runs lifted code at a time, with the
+switch points at the blocking shims -- and the section's script really runs:
+3,440 script lines over **61 frames**, driving Message, Text, Mouse, String,
+RE3D and Protocol. Then the script finishes, the boot thread returns, the
+process manager reaps the process because a boot process lives exactly as long
+as its boot thread, the main loop's live-process count reaches zero, and
+WinMain returns.
 
-The one structural difference from a real run: **`CreateThread` does not run the
-thread.** The machine state is a single set of globals, so a host thread
-executing lifted code would race the main one on every register, and running
-the routine synchronously does not terminate — what `InitBase` creates is a
-service loop. Making the machine state thread-local is the next structural
-decision, and it is independent of the 32-bit question.
+Nothing is drawn. No Direct3D device is ever created: RE3D enumerates drivers
+and probes a device, and the screen code is never entered. And nothing goes
+wrong on the way -- the game's own assert and log machinery is live in the
+retail build and, with the flag it needs poked back on, reports nothing at all.
+
+`docs/STARTUP.md` has the measured chain, the five explanations that were ruled
+out, and the one open question.
 
 ## Where it goes next
 

@@ -756,6 +756,14 @@ static void u32_CreateDialogParamA(void) {
  * no preemption. The game's worker polls with a timeout, which is what makes
  * this work. If a thread turns up that spins instead, it needs a real
  * per-thread register file and the generated code has to change with it.
+ *
+ * That ceiling was measured and is NOT what ends the game's first section. A
+ * coarse preemption -- hand the machine over every N function entries if
+ * anyone is waiting -- was written, tried at N = 500, 5,000 and 50,000, and
+ * changed nothing: the main thread is never starved, because it has 7.8
+ * million calls of its own to make (compiling 1,713 object templates out of
+ * 9,554 archive members) while the worker runs the section's script. The
+ * preemption was deleted rather than left in as dead weight in the hot path.
  */
 #define MACH_STACK_BASE 0x08000000u      /* below the heap, above the image */
 #define MACH_STACK_SIZE 0x00100000u      /* 1 MB each, as the main one is */
@@ -866,6 +874,7 @@ void mach_yield(uint32_t sleep_ms) {
         if (!SwitchToThread()) Sleep(1);
     mach_enter();
 }
+
 
 
 typedef struct {

@@ -87,7 +87,34 @@ static uint8_t* g_fh_seen;
 static uint32_t g_at[4];
 static unsigned g_at_n;
 
+/* --watchspan LO HI narrows or moves the [ecx+..] window a --watch dumps. */
+static int g_wlo = 0, g_whi = 0xA0;
+
+/*
+ * --poke ADDR VAL VA writes one byte the first time VA is entered.
+ *
+ * Games turn their own diagnostics off. Focom's assert and log machinery is
+ * live in the retail build -- 2,500 report sites test a byte at 0x00833878
+ * that the image initialises to 1 -- but startup overwrites it from a setting
+ * that is absent, so every report is skipped. Poking the byte back after
+ * startup turns the developers' own diagnostics on, and a "write this flag
+ * once execution has got past the code that clears it" primitive is the
+ * general shape of that.
+ *
+ * ponytail: one byte, one site, no restore. Nothing has needed a dword or a
+ * second poke.
+ */
+static uint32_t g_poke_addr, g_poke_at;
+static uint8_t g_poke_val;
+static int g_poke_done;
+
 void recomp_trace_enter(uint32_t va) {
+    if (g_poke_at && !g_poke_done && va == g_poke_at) {
+        g_poke_done = 1;
+        MEM8(g_poke_addr) = g_poke_val;
+        fprintf(stderr, "[poke] MEM8(0x%08X) = %u on entry to 0x%08X\n",
+                g_poke_addr, g_poke_val, va);
+    }
     /* Keep the ring backtrace fed: recomp_dump_trace is what prints a call
      * path after a fault, and a diagnostic that has quietly stopped recording
      * is worse than none. */
@@ -134,7 +161,7 @@ void recomp_trace_enter(uint32_t va) {
          * embedded base subobjects and the members the bring-up cares
          * about, without needing a recompile per field. */
         if (g_ecx >= 0x00200000u)
-            for (int row = 0; row < 0xA0; row += 0x20) {
+            for (int row = g_wlo; row < g_whi; row += 0x20) {
                 fprintf(stderr, "[watch]   [ecx+%02X]:", row);
                 for (int k = 0; k < 0x20; k += 4)
                     fprintf(stderr, " %08X", MEM32(g_ecx + row + k));
@@ -586,6 +613,15 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--watch") && i + 1 < argc && g_watch_n < 8)
             g_watch[g_watch_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
+        else if (!strcmp(argv[i], "--poke") && i + 3 < argc) {
+            g_poke_addr = (uint32_t)strtoul(argv[++i], NULL, 0);
+            g_poke_val = (uint8_t)strtoul(argv[++i], NULL, 0);
+            g_poke_at = (uint32_t)strtoul(argv[++i], NULL, 0);
+        }
+        else if (!strcmp(argv[i], "--watchspan") && i + 2 < argc) {
+            g_wlo = (int)strtoul(argv[++i], NULL, 0) & ~0x1F;
+            g_whi = (int)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--argtrace") && i + 1 < argc && g_at_n < 4)
             g_at[g_at_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--firsthit") && i + 2 < argc) {
