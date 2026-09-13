@@ -7,10 +7,22 @@ Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, and
 next to [xwa](https://github.com/sp00nznet/xwa) — same publisher, same year,
 same studio's tooling.
 
-## Project Status: **P0 and P2 complete. P1 in progress.**
+## Project Status: **P0, P1 and P2 complete. Nothing lifted yet.**
 
-The phases went out of order on purpose, and that turned out to be the right
-call — see [P1 came second](#p1-came-second-and-should-have).
+| | |
+|---|---:|
+| recovered function starts | **34,674** |
+| byte coverage of `.text` | **98.8%** |
+| classes recovered from RTTI | **567** |
+| vtables / virtual methods | 1,121 / 5,436 |
+| methods attributed to one class | 4,832 |
+| functions attributed to a source file | 738 |
+| game-specific classes | **6** |
+
+**Read [`docs/RECON.md`](docs/RECON.md) first.** It is the primary P1 document:
+the `RE3D`/`Ronin`/`GEAPI`/`DX7` namespace map, the renderer's interface seam,
+and the decoded `.rpk`, `.znm`/SMUSH and `.M3D` formats. This README covers P0,
+P2 and what was added afterwards; it does not repeat RECON.md.
 
 ---
 
@@ -24,110 +36,66 @@ call — see [P1 came second](#p1-came-second-and-should-have).
 | `mss32.dll` | 328,704 | — | 1999-01-04 | Miles Sound System |
 | `FocomSetup.dll` | 843,776 | — | 2000-02-29 | installer |
 
-MSVC 6.0, and it imports `MSVCP60.dll` — so the C++ standard library and the
-CRT are both *dynamic*, which is a smaller classification problem than a
-statically linked CRT (cf. Monster Truck Madness).
+MSVC 6.0, `MSVCP60.dll` with 82 imports — STL-heavy C++, and both the CRT and
+the standard library are *dynamic*, which is a smaller classification problem
+than a statically linked CRT (cf. Monster Truck Madness).
 
-**No DRM.** Entropy 5.31–6.45 across every section, no wrapper sections, no
-packer. Nothing to dump, nothing to unwrap. There is no `.reloc` section —
-fixed image base, which is what `runtime/recomp32/image_loader.c` already
-assumes.
+**No DRM**, no `.reloc`, fixed base `0x00400000`. 3.94 MB of `.text` makes this
+the second-largest target in the collection; only Rise of Legends (13.25 MB) is
+bigger, and that one is explicitly a stress test rather than a project. This is
+roughly 1.5× X-Wing Alliance and 4× Crimson Skies.
 
-3.94 MB of `.text` makes this the second-largest target in the collection.
-Only Rise of Legends (13.25 MB) is bigger, and Rise of Legends is explicitly
-the stress test rather than a project. This is roughly 1.5× X-Wing Alliance and
-4× Crimson Skies.
+### The import table understates the runtime surface
 
-### The import table understates the problem
-
-307 imports across 11 DLLs — and **no DirectDraw, no Direct3D, and exactly one
-DirectInput function**:
+307 imports across 11 DLLs, and **not one of them is DirectX**:
 
 ```
 KERNEL32 63   MSVCP60 82   MSVCRT 67   USER32 44   mss32 22
 WINMM 8   GDI32 11   ADVAPI32 5   ole32 3   SHELL32 1   DINPUT 1
 ```
 
-The graphics stack is not imported. It is loaded at runtime — `DDRAW.DLL`,
-`SMUSH.DLL`, `FEELIT.DLL` and `DINPUT.DLL` all appear as name strings for
-`LoadLibrary`, with `DirectDrawCreate` / `DirectDrawCreateEx` /
-`DirectDrawEnumerateA` / `DirectDrawEnumerateExA` resolved by
-`GetProcAddress` — and DirectPlay, DirectMusic and the video pipeline come in
-through **COM**, via the three `ole32` entry points:
+`DDRAW.DLL`, `SMUSH.DLL`, `FEELIT.DLL` and `DINPUT.DLL` are `LoadLibrary`'d;
+DirectPlay, DirectMusic and the video path arrive through `CoCreateInstance`.
+RECON.md makes this point from the GUIDs in `.rdata`; the import table confirms
+it from the other side.
 
-```
-CoCreateInstance() construction of IDirectPlay4A interface
-CoCreateInstance() construction of IDirectPlayLobby3A interface
-Couldn't create CLSID_DirectMusic
-```
-
-Three renderer paths are named in the strings: `Direct3D hardware renderer`,
-`Direct3D RGB renderer`, `DirectDraw, memory-lock only renderer`.
-
-This matters for the runtime plan. `runtime/compat/win32_compat.h` sorts 275
-**imported** Win32 APIs into keep/shim/SDL2/stub. That machinery does not reach
-an interface pointer obtained from `CoCreateInstance` and called through a
-vtable — which is the same class of problem the Encarta 97 work built
-`runtime/hybrid/` for. Budget for interface shims, not just import shims.
-
-`FEELIT.DLL` is Immersion's force-feedback driver, and there is a
-`GamePPGlobalSysFEELitMouseManager` class to go with it. Genuinely obscure.
+The consequence for bring-up: `runtime/compat/win32_compat.h` sorts 275
+**imported** Win32 APIs into keep/shim/SDL2/stub, and that machinery does not
+reach an interface pointer called through a vtable. Budget for interface shims.
+`runtime/hybrid/` — built for Encarta 97's MFC boundary — is the nearest
+existing machinery. RECON.md's point that `CDD7MemRenderer` gives a software
+path means the first shim can be "hand it a lockable surface", not "implement
+Direct3D 7".
 
 ---
 
 ## P2: the classification is free, because RTTI was left on
 
-**567 classes, 1,121 vtables, 5,436 virtual methods, recovered in seconds.**
-
-```
-python ../tools/tools/cpp/rtti.py game/Focom.exe -o analysis/rtti.json \
-                                                 --seeds analysis/rtti_seeds.json
-  type descriptors          606
-  complete object locators  1,121
-  vtables                   1,121
-  classes                   567
-  virtual methods           5,436  (4,832 attributable to one class)
-```
-
-For scale: **Black & White has 569 types, and they were recovered by hand.**
-That project is what the whole of `tools/cpp/` was built for. This is the same
-number of classes, with their names, their vtables and their inheritance
-chains, out of one command — because LucasArts shipped a release build with
+567 classes out of one `tools/cpp/rtti.py` run. For scale: **Black & White has
+569 types and they were recovered by hand** — that project is what all of
+`tools/cpp/` was built for. Same class count here, with names, vtables and
+inheritance chains, in seconds, because LucasArts shipped a release build with
 RTTI enabled.
 
-The contrast with Rise of Legends is sharper still. Its standing problem is
-*25,513 functions reachable only through vtables, and no RTTI to lean on*. Here
-the vtables describe themselves.
+RECON.md maps the four engine namespaces. What it left as "plus `Subsystem`,
+`GamePPMultiplayer`, `GamePPVisBase` and friends" is 237 of the 567 classes, and
+they sort cleanly by name prefix:
 
-### The engine has a name
-
-Six source paths survived in assert strings, and they name the whole thing:
-
-```
-c:\ronin\gamepp\GamePPMultiplayer/GamePPSubsystemIdioms.h
-C:\ronin\gamepp\gameppmultiplayer\GamePPMultiplayerConnectionDirectPlayHelpers.h
-```
-
-The engine is **GamePP**; the studio tree is **`ronin`**. The RTTI names sort
-into eight libraries with no guessing required:
-
-| Library | Classes | vtable slots | What it is |
+| Family | Classes | vtable slots | What it is |
 |---|---:|---:|---|
 | `GamePPGlobal*` | 145 | 4,274 | Platform/game layer — resources, events, managers, **and the script AST** |
-| `RE3D::` | 107 | — | The render engine. `CD3D7GeometryRenderer`, `CD3D7MaterialManager` — a **D3D7** backend |
-| `Ronin::` | 77 | 632 | Studio foundation: a virtual filesystem, threads, bitmap loaders, math |
-| `GamePPSys*` | 67 | 1,650 | Engine core: Object, Process, Event, Message, Resource, Library, Variable, State, Undo |
-| `GEAPI::` | 53 | — | Geometry/animation API — object, material and animation factories over `TQuat`/`TVector`/`TMatrix`/`TTransf` |
-| `DX7::` | 26 | — | DirectX 7 wrapper |
+| `GamePPSys*` | 67 | 1,650 | Framework core: Object, Process, Event, Message, Resource, Library, Variable, State, Undo |
 | `GamePPVis*` | 25 | 1,053 | **A visual editor.** Shipped in the retail binary. |
-| `GamePPMultiplayer::` | 20 | 655 | DirectPlay |
+| `GamePPMultiplayer*` | 20 | 655 | DirectPlay |
 | `Focom*` | **6** | 161 | **The entire game-specific surface** |
+| `GamePPProd*` / `App` / `Log` | 3 | 247 | Startup and logging |
 
-82% of classes have a recovered base class.
+82% of all 567 classes have a recovered base class. (Namespace counts here are
+by outer scope after stripping template arguments; they run a little higher than
+RECON.md's for `RE3D` and `Ronin`, which is a counting-method difference rather
+than a disagreement — RECON.md's table is the one to quote.)
 
-### Two findings that change the plan
-
-**1. Six classes are game-specific. Six, out of 567.**
+### Six classes are game-specific. Six, out of 567.
 
 ```
 FocomStartup                       FocomEmitterObjectCallback
@@ -135,115 +103,120 @@ FocomPassCallback                  GamePPFocomSystemManager
 GamePPFocomLandscapeResourceData   GamePPFocomLandscapeResourceType
 ```
 
+Plus a handful of global-scope render-pass callbacks — `SkyObjectCallback`,
+`ShadowObjectCallback`, `RadarObjectCallback`, `CFOWOverlayCallback`
+(fog of war), `GlobalWeatherObjectCallback`, `CSmushMemRenderCallback`.
+
 This is the Gunman Chronicles shape — *78% of the binary is the SDK, and only
 499 of 3,990 functions need real work* — except Gunman needed a four-pass
-classifier to **prove** which functions were SDK, and that classifier is what
-all of `tools/classify/` is. Here the answer is in the type names. Force
-Commander is a thin game on a large unreleased in-house engine, and the
-recompilation is mostly an **engine** recompilation.
+classifier to **prove** which functions were SDK, and that classifier is all of
+`tools/classify/`. Here the answer is in the type names, and `classify/` does
+not need to run at all.
 
-That also means the payoff is bigger than one title. GamePP was Ronin's engine;
-anything else built on it becomes cheap once this exists.
+So this is a thin game on a large unreleased in-house engine, and the
+recompilation is mostly an **engine** recompilation. The payoff is bigger than
+one title: anything else built on Ronin/GamePP gets cheap afterwards.
 
-**2. Mission logic is a visual script, not native code.**
+### Mission logic is a visual script, not native code
 
-38 of the `GamePPGlobal*` classes are AST nodes with vtables:
+38 `GamePPGlobal*` classes are AST nodes with their own vtables:
 
 ```
 If  Else  ElseIf  For  EndFor  While  EndWhile  Switch  Case  CaseOr  CaseRange
 CaseOrRange  DefaultCase  Do  Loop  LoopForever  LoopVar  EndLoop  EndIf  And
 Or  Assert  Comment  NOOP  Stop  CallParent  EnumDef  ArrayTypeDef  ConstTypeDef
-MessageTypeDef  ResourceTypeDef  EventFunctionTypeDef  Argument{Expr,VarDec,...}
+MessageTypeDef  ResourceTypeDef  EventFunctionTypeDef  Argument{Expr,VarDec,…}
 ```
 
-Together with `GamePPSysCodeBlock`, `GamePPSysCodeContainer`,
-`GamePPSysLibraryProc`, `GamePPVisCodeBlock`, `GamePPVisCodeClipboard` and the
-`info.pro` / `code.bin` filenames in the data section, that is a complete
-in-house visual scripting language *plus its editor*, compiled into the shipped
-game.
+With `GamePPSysCodeBlock`, `GamePPSysCodeContainer`, `GamePPSysLibraryProc`,
+`GamePPVisCodeBlock`, `GamePPVisCodeClipboard`, the `info.pro` / `code.bin`
+filenames in `.rdata`, and `Subsystems` as the *first* asset category in the
+`.rpk` string table, that is a complete in-house visual scripting language
+**and its editor**, compiled into the shipped game.
 
-So Force Commander joins Encarta 97, the Magic School Bus and Prodigy on the
-same shelf: **the interpreter is the code, and the behaviour is data.**
-Recompiling the binary gets the VM; `code.bin` is the other half of the project.
+Force Commander therefore lands on the same shelf as Encarta 97, the Magic
+School Bus and Prodigy: **the interpreter is the code and the behaviour is
+data.** Recompiling the binary gets the VM; `code.bin` and the `Subsystems`
+members of the `.rpk` are the other half of the project.
 
-`Ronin::CRPKPackFile` / `CRPKFile` / `CRPKFolder` behind
-`Ronin::IFileSystem_class` says the assets live in an **RPK virtual
-filesystem** — that is the asset-extraction target, and it is not a format
-`tools/assets/` currently knows.
+Audio has two managers, `GamePPGlobalSysMilesSoundManager` and
+`GamePPGlobalSysiMuseSoundManager` — **iMuse**, LucasArts' interactive music
+system, alongside Miles. And `GamePPGlobalSysFEELitMouseManager` goes with the
+`FEELIT.DLL` string: Immersion force-feedback. Genuinely obscure.
 
 ---
 
-## P1 came second, and should have
+## Correction: RTTI is a symbol source, not a recovery pass
 
-`tools/cpp/rtti.py` says so in its own docstring:
+This was asserted the wrong way round here and is worth recording properly.
 
-> **The method addresses are proof of function entry points**, which is why
-> this is worth running *before* disassembly rather than after.
+`tools/cpp/rtti.py`'s docstring says *the method addresses are proof of function
+entry points, which is why this is worth running before disassembly rather than
+after*, and the obvious inference is that seeding a 3.94 MB C++ binary with
+1,121 vtables should find functions a branch scan cannot. **Measured, it finds
+essentially none:**
 
-The first recursive-descent run here was launched unseeded and then thrown
-away, because RTTI had already produced 5,436 addresses that are *known* to be
-function starts. On a 3.94 MB C++ binary with 1,121 vtables that is not a
-marginal improvement — a method reached only through a vtable slot is called by
-no `CALL` anywhere in the image, so a branch scan never names it.
-
-### Two independent recoveries, cross-checked
-
-| | methods |
+| | |
 |---|---:|
-| `rtti.py` — exact, from CompleteObjectLocators | 5,436 |
-| `vtable_scan.py` — structural, runs of code pointers in `.rdata` | 5,670 |
-| **agree** | **4,982** (91% of RTTI) |
-| RTTI only | 454 |
-| structural only | 688 |
-| **union → `analysis/seeds_union.json`** | **6,124** |
+| RTTI virtual methods | 5,436 |
+| already in the disassembler's catalog | **5,427** |
+| not found by `disasm32` | 9 |
+| …of those, new functions rather than alternate entry points | **0** |
 
-Worth keeping both. The 688 the structural scan finds alone are most likely the
-`DX7::`/`RE3D::` COM-style interfaces, whose vtables are real but carry no
-CompleteObjectLocator; the 454 RTTI finds alone are vtables the structural
-heuristics rejected. `vtable_scan.py` exists for binaries built with RTTI off,
-and this target shows it is still worth running when RTTI is on.
+All nine land inside a body the sweep had already decoded, against 34,674
+recovered starts at 98.8% byte coverage. `vtable_scan.py` measured against RTTI
+as truth found 91.6% of its methods and proposed 688 more, of which **109** were
+absent from the catalog — so the more generous of the two passes contributes at
+most 109 addresses out of 34,674.
 
-```
-vtable candidates 847 (.rdata 843, .data 4)
-slots per vtable  min 3, median 8, max 358
-largest named     GamePPProdBase 223, GamePPVisBase 222,
-                  GamePPGlobalDataRE3DObject2D 162, GamePPVisObjectTemplate 155
-```
+That is now measured on two binaries that differ in nearly everything that
+should matter (Trespasser: 7.8 MB, has a linker map; this: 3.9 MB, none) with
+the same answer both times. **E9 seeding plus the fixpoint is what finds the
+functions.** See
+[pcrecomp docs/CONSOLIDATION.md](https://github.com/sp00nznet/pcrecomp/blob/main/docs/CONSOLIDATION.md)
+items 5 and 6 for the full write-up.
 
-### Still running
+What RTTI is worth here is **names**, and on a stripped retail binary with no
+symbols of any kind that is the whole point: 4,832 methods attributed to one of
+567 classes plus 738 functions attributed to a source file means **5,570 of
+34,674 functions (16%) stop being `sub_004A1C30`**. That is what makes lifted
+code readable and a crash stack worth reading.
 
-`disasm32.py` with `--seed-functions analysis/seeds_union.json` over 3.94 MB has
-not finished yet, so there is no recursive-descent catalog and **no Phase 1b
-score**. When it lands, the scoring here will be unusually strong: the 5,436
-RTTI method addresses are real ground truth, not a second opinion, so
-`score_recovery.py` will give a precision/recall figure that actually means
-something — unlike a reference reconstructed from a partial disassembly.
-
-That comparison is worth doing carefully. It is the first chance in the
-collection to score 32-bit recovery against symbols on a large C++ binary, and
-whatever it says about `disasm32.py`'s vtable blindness is a toolkit finding,
-not a project one.
+`analysis/rtti_seeds.json`, `analysis/vtable_seeds.json` and their union in
+`analysis/seeds_union.json` (6,124 addresses) are kept as a names/methods index,
+not as a seeding input.
 
 ---
 
 ## Where it goes next
 
-1. **Finish the seeded disassembly, then score it** against `analysis/rtti_seeds.json`.
-2. **Split the work by library, not by address.** `GamePPSys*` (67 classes) is
-   the bottom of the dependency graph and the place to start; `GamePPVis*` (25
-   classes, 1,053 vtable slots) is the *editor* and can almost certainly be
-   stubbed out entirely for a first playable, which is a free 1,000 slots.
-3. **`Ronin::` first of all, actually.** 77 classes of filesystem, threading and
-   bitmap loading with no game logic in them — the easiest possible warm-up on
-   this binary, and `CRPKPackFile` is needed before any asset loads.
-4. **Plan interface shims, not import shims.** DDRAW/D3D7 via `LoadLibrary` +
-   `GetProcAddress`, DirectPlay and DirectMusic via COM. `runtime/hybrid/` is
-   the nearest existing machinery.
-5. **DirectPlay is a dead service.** Whatever replaces it is a design decision.
-6. Disc 2 has not been unpacked.
+1. **Regenerate the catalog and merge the names.** `disasm32.py` over 3.94 MB is
+   a long run (>20 min) and its output is not committed; `pe/debug_symbols.py`
+   and `pe/merge_names.py` both need it:
+   ```sh
+   python ../tools/tools/disasm/disasm32.py game/Focom.exe -o analysis/functions.json
+   python ../tools/tools/pe/debug_symbols.py game/Focom.exe \
+          --functions analysis/functions.json -o analysis/src_files.json
+   python ../tools/tools/pe/merge_names.py --source rtti=analysis/rtti.json \
+          --files analysis/src_files.json -o analysis/names.json
+   ```
+   Do **not** pass `--seed-functions`; the section above is why.
+2. **Split the work by library, not by address.** `Ronin::` first — 75 classes
+   of filesystem, threading, bitmap loading and math with no game logic in them,
+   and `CRPKPackFile` is needed before any asset loads. Then `GamePPSys*` (67),
+   which is the bottom of the framework dependency graph.
+3. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
+   that a first playable does not need. Free.
+4. **Finish the `.rpk` directory layout.** RECON.md maps the header, the name
+   list and the string table; the fixed-size records past the strings are not
+   done. Nothing loads until they are.
+5. **Plan interface shims, not import shims** — and start at `CDD7MemRenderer`.
+6. **DirectPlay is a dead service.** Whatever replaces it is a design decision,
+   not a recompilation one.
+7. Disc 2 has not been unpacked.
 
-`Smush.dll` is the one piece that needs no reverse engineering — SMUSH is
-documented and ScummVM has implemented it for two decades.
+`Smush.dll` needs no reverse engineering — RECON.md has the container decoded
+and ScummVM has implemented SMUSH for twenty years.
 
 ---
 
@@ -255,6 +228,7 @@ forcecommander/
   game/       extracted binaries
   analysis/   catalog, sections, imports, rtti.json, vtables.json, seeds
   docs/
+    RECON.md  the primary P1 document -- namespaces, renderer seam, formats
 ```
 
 ## Credits
