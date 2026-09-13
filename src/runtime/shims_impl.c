@@ -188,9 +188,31 @@ static void imp_EndPaint(void) {
     RET(1); STDRET(2);
 }
 
+/*
+ * GetWindowRect, answered as the client area at the origin: (0, 0, cw, ch).
+ *
+ * Deliberately not the real window rect. The splash paint code passes
+ * rc.right/rc.bottom straight into StretchBlt as the destination width and
+ * height, which is only correct for a window positioned at (0,0) -- and the
+ * game guarantees that for itself by putting the splash full-screen at the
+ * origin. Handing back true screen coordinates makes it overstretch by however
+ * far the window is from the corner, so the host would have to be a borderless
+ * overlay in the top-left to look right.
+ *
+ * Reporting the client rect instead gives the game exactly the rect its
+ * assumption describes, and the blit fills the client area 1:1 with the window
+ * anywhere on screen, with a title bar, movable.
+ *
+ * The ceiling: code that uses GetWindowRect to *position* something, or to work
+ * out where the window is relative to the desktop, will get the wrong answer.
+ * Nothing on the splash path does. Revisit when something does -- at that point
+ * this needs to become "real rect, and fix up the blit", not a bigger lie.
+ * ponytail: client-rect-as-window-rect, narrow and load-bearing.
+ */
 static void imp_GetWindowRect(void) {
     RECT* r = ARGP(1, RECT);
-    RET(GetWindowRect((HWND)i2h(ARG(0)), r)); STDRET(2);
+    BOOL ok = GetClientRect((HWND)i2h(ARG(0)), r);   /* already origin-based */
+    RET(ok); STDRET(2);
 }
 
 static void imp_GetWindowTextA(void) {

@@ -7,7 +7,30 @@ Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, and
 next to [xwa](https://github.com/sp00nznet/xwa) — same publisher, same year,
 same studio's tooling.
 
-## Project Status: **P0, P1 and P2 complete. Nothing lifted yet.**
+## Project Status: **It renders.** The splash screen, drawn by lifted code.
+
+![The splash screen, drawn by recompiled Force Commander code](docs/img/splash.png)
+
+*640×480, pixel-exact. Every pixel is produced by `sub_00401770` — Force
+Commander's own splash dialog procedure, lifted to C — running on a host that
+owns nothing but the window. The title text is the game's too: `CreateFontA`
+sized from the window rect, then `TextOutA` twice, black then yellow one pixel
+up and left, for the drop shadow.*
+
+```
+$ build/focom game/Focom.exe --splash
+  import bridges:               307
+  IAT slots self-patched:       307
+  mapped game/Focom.exe: 0x00400000 + 5632000 bytes
+  WM_INITDIALOG -> lifted 0x00401770
+  [shim] LoadBitmapA(102): 640x480 8bpp, 256 colors, 308264 bytes
+  [shim] StretchBlt dst=0,0 640x480 src=0,0 640x480 rop=00CC0020 -> 1
+  real shims installed:         71
+```
+
+Two functions lifted to get here (the dialog proc and `__chkstk`), 71 of 307
+imports with real bodies. **Getting in-game is a different order of work** — see
+[The road to in-game](#the-road-to-in-game).
 
 | | |
 |---|---:|
@@ -187,6 +210,26 @@ code readable and a crash stack worth reading.
 not as a seeding input.
 
 ---
+
+## The road to in-game
+
+The splash screen was reachable because it is a closed loop: one dialog
+procedure, two GDI calls, a resource already inside the exe. Nothing else in
+this binary is like that. Honest inventory of what stands between here and a
+mission running, roughly in dependency order:
+
+| # | Work | Size |
+|---|---|---|
+| 1 | **The function catalog.** `disasm32.py` over 3.94 MB takes ~40 min and 3 GB. Needed before any closure can be computed. | running |
+| 2 | **Lift the startup closure** and walk the failures. `RECOMP_NOT_LIFTED` and the refusing import stubs exist so each run names the next thing to fix. | iterative |
+| 3 | **58 `__thiscall` MSVCP60 shims.** `basic_string`, `basic_fstream`, `ios_base`. Each needs its argument *byte* count, which the mangled name does not give, and real semantics. `_initterm` hits these first. | the wall |
+| 4 | **DirectDraw 7 over the DIB.** `DDRAW.DLL` arrives by `LoadLibrary` + `GetProcAddress`, so the interception point is those two calls; then `DirectDrawCreate` has to return a COM object whose vtable the lifted code calls through. RECON.md's finding that `CDD7MemRenderer` exists is what makes this tractable — the game has a software path, so the surface can be our own memory. | large |
+| 5 | **The `.rpk` reader.** 274 MB, and nothing loads without it. RECON.md maps the header, the name list and the 7,000-entry string table; the fixed-size records past the strings are not done. | medium |
+| 6 | **Stubs that must not lie:** DirectInput, Miles (22 entries), SMUSH, DirectPlay. Returning "no device" cleanly is usually enough, and DirectPlay is a dead service anyway. | small |
+| 7 | **Whatever the lifter gets wrong across 34,674 functions.** Fury3 needed a carry-flag model settled by measurement and a dozen CRT functions host-shimmed, at 1,945 functions. This is 18× that. | unknown |
+
+Item 3 is the real gate, and item 7 is the real risk. Neither is a reason not to
+proceed; both are a reason not to promise a date.
 
 ## Where it goes next
 

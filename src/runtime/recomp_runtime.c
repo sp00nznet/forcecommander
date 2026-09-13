@@ -187,26 +187,32 @@ uint32_t host_create_window(const char* title) {
     RegisterClassA(&wc);
 
     /*
-     * WS_POPUP at (0,0), client area exactly the bitmap size -- and that is not
-     * cosmetic. The splash paint code does:
+     * An ordinary titled window, centred. The splash paint code does:
      *
      *     GetWindowRect(hwnd, &rc);
      *     StretchBlt(dst, 0, 0, rc.right, rc.bottom, src, 0, 0, 640, 480, SRCCOPY);
      *
-     * It passes right/bottom straight in as the destination width and height,
-     * which is only correct for a window whose rect starts at (0,0) -- and the
-     * game's own setup guarantees that, positioning the splash full-screen at
-     * the origin via GetSystemMetrics + SetWindowPos. With the window anywhere
-     * else, right/bottom are screen coordinates: at CW_USEDEFAULT this asked
-     * for an 812x675 stretch of a 640x480 bitmap into a 640x480 client area,
-     * so the picture came out zoomed and cropped to its top-left corner.
+     * -- it passes right/bottom straight in as the destination width and
+     * height, which is only true for a window whose rect starts at (0,0), and
+     * the game's own setup guarantees that by positioning the splash
+     * full-screen at the origin (GetSystemMetrics + SetWindowPos). Left alone,
+     * a window at any other position makes right/bottom screen coordinates and
+     * the blit overstretches: the first render asked for 812x675 of a 640x480
+     * bitmap and came out zoomed into its top-left corner.
      *
-     * A border would break it too, since AdjustWindowRect pushes the client
-     * origin off (0,0) while the game still measures the whole window.
+     * The fix is not to move the window to the origin -- that gives a
+     * borderless thing sitting on top of everything. It is to make the
+     * GetWindowRect shim answer with the rect the game assumes it has, which is
+     * the client area at the origin. See imp_GetWindowRect in shims_impl.c.
      */
+    RECT r = {0, 0, g_w, g_h};
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    int ww = r.right - r.left, wh = r.bottom - r.top;
+    int sx = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
+    int sy = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
     g_hwnd = CreateWindowExA(0, wc.lpszClassName, title ? title : "Force Commander (recomp)",
-                             WS_POPUP, 0, 0, g_w, g_h,
-                             NULL, NULL, wc.hInstance, NULL);
+                             WS_OVERLAPPEDWINDOW, sx > 0 ? sx : 0, sy > 0 ? sy : 0,
+                             ww, wh, NULL, NULL, wc.hInstance, NULL);
     if (!g_hwnd) return 0;
 
     BITMAPINFO bi = {0};
