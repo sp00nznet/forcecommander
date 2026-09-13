@@ -295,37 +295,60 @@ slot of the four device descriptions it keeps inline, so offering only the RGB
 software device made it skip the entire screen and renderer setup and run its
 front end for 61 frames with nothing to draw on.
 
-And then **nothing is presented**, which for a while looked like the last gap:
-`Flip` is never called. It is not the gap. `--dumpframe` writes the render
-target to a BMP from inside a lifted thread and counts its pixels, and both the
-primary and the render target are *entirely black* -- nothing has been drawn
-into them, so the missing present is a symptom.
+And then **it draws**. Every reading of the stall pointed at the boot
+script -- one context on `Wait Forever`, one on a `Wait If` that never cleared
+-- and the script was fine. Its thread was being shot, by one shim:
 
-What the game is actually doing is **waiting for its intro movie**. The boot
-script initialises the RE3D stages, starts a script thread whose block is
-`Loop Forever { ... Smush ... Wait }`, and then sits on a `Wait If`. The exe
-loads `Resource/Smush.dll` by name and asks for four exports; all four were
-unresolved, so the loader `FreeLibrary`d the module and zeroed its handle --
-graceful, silent, and fatal to the script. The four are shimmed now (the movie
-is skipped, not decoded) and the wait is still there, so the producer that
-should satisfy it is the current frontier. `docs/STARTUP.md` has the trace, the
-signatures, and why the engine retires a process whose every context is
-blocked.
+`u32_MsgWaitForMultipleObjects` passed `nCount = 0` with no handle array, and
+read its timeout from `ARG(2)`, which is `bWaitAll`. The return value of that
+function is a *position in the handle array*, so with `nCount = 0` "a message
+arrived" comes back as `WAIT_OBJECT_0 + 0` -- byte-for-byte what "handle 0
+signalled" looks like. Handle 0, for every Ronin thread, is its stop event, and
+a boot process lives exactly as long as its boot thread. The first stray mouse
+message ended the game's first section; the frame count that varied run to run
+(61, 68, 164) was just how long it took one message to arrive.
+
+With the handles passed through, `BeginScene`, `SetTransform`, `SetViewport`,
+`Clear`, `EndScene` and `Flip` all run, `CDD7FSScreen::Present` is reached, and
+the window shows frames:
+
+```
+[present] #1 surface 0x10D62090 640x480: 307200 of 307200 pixels non-black
+[present] #3 surface 0x10D62090 640x480: 0 of 307200 pixels non-black
+[present] #4 surface 0x10D62090 640x480: 307200 of 307200 pixels non-black
+```
+
+Solid colours, because the `Clear` is real and the `DrawPrimitive` family still
+only counts vertices -- so **rasterisation is the next job**, and it is now the
+only thing between this and a picture. The script runs 284 lines instead of 156,
+past the wait and into blocks it had never reached, and the game starts loading
+256x256 textures.
+
+Three other things had to be right for that, and `docs/STARTUP.md` has them:
+`IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),
+`host_present` blitting straight to the window rather than through
+`UpdateWindow` (which blocks on another thread's message pump, and hung the
+process on the first `Flip` it ever issued), and a fourth lifter bug -- a body
+can continue past an int3 when something jumps over it, and four dropped
+leaders came out as tail transfers to VAs nobody lifted.
+
+`SMUSH.DLL` is shimmed too, so the intro movie is skipped rather than silently
+disabling the module: the exe asks `GetProcAddress` for four exports and the
+loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 ## Where it goes next
 
 In order, and the first two are the ones that matter:
 
-1. **Satisfy the `Wait If`.** It is load-bearing: `--nowait` stubs the condition
-   to false and the script runs on and faults in `sub_006BF7B0` on a container
-   whose count is positive and whose array pointer is null, so running past the
-   wait reaches a consumer before its producer. `WaitIf` evaluates its
-   condition, calls `sub_00506EC0`, and on a true answer records the resume line
-   and sets `ctx->flags |= 4`; `sub_00506EC0` walks an event queue. What posts
-   to that queue, and which post never happens, is the question.
-2. **Make the movie thread step.** Its block compiles and never runs a line.
-   Script threads started elsewhere in the same script do run their bodies
-   inline, so this is a specific failure, not a missing scheduler.
+1. **Rasterise.** `Clear` is real; the `DrawPrimitive` family accepts vertices
+   and counts them. The game presents solid colours because that is all there
+   is to present. This is now the only thing between the current state and a
+   picture, and the vertex data is already in hand -- `IDirect3DVertexBuffer7`
+   hands out the buffer the game fills.
+2. **Keep following the script.** It is 284 lines deep and loading textures;
+   each new fault is one more shim or one more lifter shape. The instruments to
+   read it are `--scripttrace`, `--argtrace 0x0052C300` and
+   `tools/scriptmap.py`.
 3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
    and returning "no device" cleanly should be enough for a first frame.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*

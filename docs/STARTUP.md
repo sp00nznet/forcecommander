@@ -70,7 +70,7 @@ without a word.
     Run 2 1 6
     HideLoadingPanel
 
-## Where it stops today
+## How it got here, in order
 
 `Run 2 1 6` is `GamePPProdStartup` slot 19, forwarding to `GamePPProdBase`
 slot 61 (`sub_0051CE70`), which calls slot 14 on the **GamePPVisProcessManager**
@@ -209,54 +209,40 @@ Two more things had to be wired that only a fault revealed:
   by a function nobody ran, so the object came back with a vptr of 0. Nothing
   had exercised the path, because the probe only ever asked for the address.
 
-### Nothing is drawn, and that is not a presentation problem
+### Nothing was drawn, and it was not the presentation
 
-`BeginScene`, `Clear`, `DrawPrimitive` and `Flip` are never called, and
-`CDD7FSScreen`'s present (`sub_007363B0`, slot 10 of vtable 0x007D87A0) is
-never reached. For a while the obvious reading was that the frame is composed
-and simply never shown.
-
-It is not. `--dumpframe PATH` writes the Direct3D render target to a BMP from
-whichever lifted thread is running -- no window, no message pump, no second
-thread -- and prints how much of it is not black:
-
-```
-[dump] work/frame.0.bmp: surface 0x1000AB60 640x480 16bpp, 0 of 307200 non-black
-[dump] work/frame.1.bmp: surface 0x10D62090 640x480 16bpp, 0 of 307200 non-black
-```
-
-Both the primary and the render target are **entirely black**. Nothing has been
-drawn into them, so the missing `Flip` is a consequence, not the cause. That
-retires the whole "find the present" line of enquiry.
+`Flip` was never called, which for a long time read as "the frame is composed
+and never shown". It was not. `--dumpframe` writes the frames the game presents
+to a BMP and counts their non-black pixels, and before the fix below both the
+primary and the render target were **entirely black**. Nothing had been drawn
+into them.
 
 ### The boot script, as it actually runs
 
-`--scripttrace` now prints, for every line the interpreter steps, the block, the
-line number, the line's thunk and the class that implements it. The class is
-the useful part and it takes one indirection more than it looks: `[line+4]` is
-always the `GamePPVisLibrary` *wrapper*, whose vtable is the same for every
-line; the object that implements the particular script function is at
-`wrapper+0x20` (`sub_00517FA0` is nothing but a forward to it) and its vtable is
-one class per script function, which `analysis/rtti.json` names.
+`--scripttrace` prints, for every line the interpreter steps, the block, the
+line number, the line's thunk and the class that implements it. The class takes
+one indirection more than it looks: `[line+4]` is always the `GamePPVisLibrary`
+*wrapper*, whose vtable is the same for every line; the object that implements
+the particular script function is at `wrapper+0x20` (`sub_00517FA0` is nothing
+but a forward to it) and its vtable is one class per script function, which
+`analysis/rtti.json` names. `[line+8]` is the argument block and `[args+8]` the
+opcode a subsystem switches on -- `GamePPGlobalThread`'s Execute is a 44-way
+jump table on exactly that value.
 
 Interleaved with `--argtrace 0x0052C300` (`GamePPVisLibraryManager::GetLibrary`,
-whose one argument is a subsystem id that `tools/scriptmap.py` names) that makes
-the boot script readable. It does this, in order:
+whose one argument is a subsystem id that `tools/scriptmap.py` names) the boot
+script becomes readable. It does this, in order:
 
 1. a block of 32 lines initialises the RE3D **stages** -- `RE3DStage` appears on
    nearly every line, and three sub-blocks of 7, 6 and 16 lines are each run
    several times, once per stage. The names in `Endor - Dawn/code.bin` match:
    `Init Stage 2D Virtual`, `Init Stage 3D`, `Init Post Engines`, `Init EXE`,
    "Initialize the 3D rendering stages", "Initialize the old engines".
-2. a block of 19 lines starts script threads (`GamePPGlobalThread`) and runs
-   one of their bodies (25 lines) inline.
-3. a block of 6 lines ends on **`GamePPGlobalSysWaitForever`**.
-4. a block of 25 lines starts one more thread -- whose block compiles
-   `Loop Forever`, `Smush`, `If`, `Wait`, `EndLoop`, i.e. the **intro movie
-   player** -- and then stops on **`GamePPGlobalSysWaitIf`** at line 6 of 25.
-
-Both remaining contexts are waiting, the movie thread's body never steps, and
-the section ends.
+2. a block of 19 lines starts script threads and runs one of their bodies
+   (25 lines) inline.
+3. a block of 6 lines ends on `GamePPGlobalSysWaitForever`.
+4. a block of 25 lines starts one more thread and waits on a
+   `GamePPGlobalSysWaitIf` at line 6.
 
 ### SMUSH.DLL was never resolved
 
@@ -286,62 +272,136 @@ SmushShutdown()                                        0x0068D30D
 `SmushPlay` is blocking -- the caller sets its state to 4 and shuts down on the
 next line -- so returning at once is exactly "the movie finished", which is what
 pressing a key during the intro does on real hardware. `Resource/Movies` is
-empty in this install anyway, so there is nothing to decode even if decoding
-were wanted.
+empty in this install anyway.
 
-That is a real infidelity fixed, and it is not enough: the movie thread's block
-still never steps.
+### What was actually killing it: MsgWaitForMultipleObjects
 
-### Why the section retires
+Every reading above pointed at the script. The script was fine. Its thread was
+being shot.
 
-`CProcessThread::Tick` (`sub_00524A80`) is one frame: `GetTickCount`, a delta,
-and `process->Update(dt)` through slot +0x118. The thread ends when `Update`
-returns false, and a boot process lives exactly as long as its boot thread.
-
-`Update` is `sub_005261C0`, and its return is one line:
+`sub_00550F60` is one step of a Ronin thread:
 
 ```
-return sub_00526A20(...) != 0  &&  this->quit == 0;     // quit at +0x258
+r = MsgWaitForMultipleObjects(1, &thread->stopEvent, FALSE, 25, QS_ALLINPUT)
+if (r == WAIT_TIMEOUT)  return thread->Tick()      /* slot 3 -- one frame */
+if (r == 0)             return false               /* stop */
+else                    pump messages; return true
 ```
 
-The quit byte is never written: its only two writers, `sub_00524920` (a
-one-instruction setter) and `sub_00524F50`, have a call count of zero in a full
-`--calltrace`. So `sub_00526A20` returned 0, and `sub_00526A20` answers "did any
-context advance this frame" -- it starts by testing `[this+0x234]`, which
-`Update` zeroes immediately before the call.
+and `false` is answered by the caller clearing `[thread+0xC]`, the OS handle,
+which `sub_005263D0` watches: a boot process lives exactly as long as its boot
+thread.
 
-So the engine retires a process the moment no context can advance. With one
-context on `Wait Forever` and one on a `Wait If` that never clears, that is
-every frame. 61 frames of it in one run, 164 in another, all of them empty: the
-whole script runs in one frame near the end and then everything stops.
+The shim passed **nCount = 0** with no handle array -- written when the target
+had no working threads, on the reasoning that there was nothing else to wait on
+-- and read its timeout from `ARG(2)`, which is `bWaitAll`. The return value of
+this function is a *position in the handle array*, so with nCount = 0 "a
+message arrived" comes back as `WAIT_OBJECT_0 + 0`, which is byte-for-byte what
+"handle 0 signalled" looks like. Handle 0 is the stop event.
 
-### The Wait If is load-bearing
+So the first stray mouse message ended the game's first section, and the frame
+count that varied run to run -- 61, 68, 164 -- was just how long it took one
+message to arrive. Two things follow that are worth keeping:
 
-`--nowait` replaces `GamePPGlobalSysWaitIf::Execute` (`sub_005D4350`, vtable
-0x007D1408 slot 20) with a "condition false" stub through
-`recomp_lookup_manual`, which `RECOMP_ICALL` consults before the dispatch table.
-It is a probe, not a fix, and what it proves is that the wait is not spurious:
-the script runs on and faults in `sub_006BF7B0` at
+- **The Wait If was never the problem.** `--nowait` (which replaces
+  `GamePPGlobalSysWaitIf::Execute` with a "condition false" stub through
+  `recomp_lookup_manual`) made the script run on and fault in `sub_006BF7B0` on
+  a container whose count was positive and whose array was null. That reads as
+  "the wait is load-bearing", and it is, but it was load-bearing on a producer
+  that had been killed, not on one that never started.
+- **An analysis of the process manager that was wrong.** `Update`
+  (`sub_005261C0`) returns `sub_00526A20(...) && !this->quit`, and both were
+  being read as the cause. `--watch 0x00526A20 --watchspan 0x220 0x260` settled
+  it in one line: `[this+0x234]` is 6 and `[this+0x258]` is 0 on every frame
+  including the last, so `Update` returned true and the manager was never the
+  one giving up.
+
+### It draws
+
+With the handles passed through:
 
 ```
-esi = [ebp+0xC] + i;  eax = [esi+0x28]      /* esi = 0 */
+[present] #1 surface 0x10D62090 640x480: 307200 of 307200 pixels non-black
+[present] #3 surface 0x10D62090 640x480: 0 of 307200 pixels non-black
+[present] #4 surface 0x10D62090 640x480: 307200 of 307200 pixels non-black
 ```
 
--- a container whose count at `[ebp+0x30]` is greater than zero while its array
-pointer at `[ebp+0xC]` is null. Something the script waits for is meant to fill
-that array, and running past the wait reaches the consumer before the producer.
+`BeginScene`, `SetTransform`, `SetViewport`, `Clear`, `EndScene` and `Flip` all
+run, `CDD7FSScreen::Present` (`sub_007363B0`) is reached, the frames alternate
+solid colours as the renderer clears them, and the script gets 284 lines deep
+instead of 156 -- past the Wait If, into four blocks it had never reached, and
+on to loading 256x256 32bpp textures.
 
-So the next thread to pull is the wait itself: `WaitIf` evaluates its condition,
-then calls `sub_00506EC0`, and on a true answer records the resume line with
-`sub_00507030` and sets `ctx->flags |= 4`. `sub_00506EC0` walks an event queue
-(`sub_00506FA0`, then `[queue vtable + 4]` and `[event vtable + 0x58]`). What
-posts to that queue, and which post never happens, is the question.
+Two more things had to be right for that:
+
+**IDirect3DVertexBuffer7**, nine methods. The game locks a vertex buffer on its
+first rendered frame and used to get a generic object whose slots abort. The
+FVF stride is deliberately not computed -- 64 bytes a vertex is larger than any
+FVF DX7 can express, and only the game writes the buffer.
+
+**`host_present` blits straight to the window.** It used to `InvalidateRect` and
+`UpdateWindow`, and `UpdateWindow` sends `WM_PAINT` -- which, for a window owned
+by another thread, blocks until that thread pumps. The renderer runs on a Ronin
+worker and the window belongs to the main thread, so the first `Flip` the game
+ever issued hung the process: the watchdog reported no lifted call for 90 s with
+`Present` at the top of the entry trace.
+
+### The fourth lifter bug: a body can continue past a gap
+
+The next fault came with one line of warning:
+
+```
+ITAIL: unresolved VA 0x0066E27D from 0x0066E150
+```
+
+`sub_0066E150` ends a block with `jmp 0x66e27d`, and what MSVC put in between is
+not padding:
+
+```
+0066E270  cc                    int3
+0066E271  b8 77 e2 66 00        mov eax, 0x0066E277     ; the EH state thunk
+0066E276  c3                    ret
+0066E277  8b 75 e4              mov esi, [ebp-0x1c]
+...
+0066E27D  <the jump target>
+```
+
+The sweep stopped at the int3 -- the rule upstreamed last time was "an int3
+ends the body when the instruction after it is not a leader", and the
+instruction after it is that thunk, not a leader. Four leaders past the gap
+were dropped, each came out as a `RECOMP_ITAIL` to a VA nobody lifted, the
+transfer silently did nothing, and the function fell through to its caller.
+Several calls later a script function handed a null `this` to `sub_006369D0`,
+the DX7 pixel-pipe manager's RE3D lookup.
+
+The fix is in `tools/lift/generate.py`: an int3 whose successor is not a leader
+ends the sweep, and the sweep then resumes at **the target of the unconditional
+jump it last took**, if that target has not been decoded. "Something stepped
+over this gap, and here is where it went" needs no judgement about the
+function's extent and cannot invent a destination.
+
+The bound was the whole difficulty, and three looser rules were measured and
+thrown away first:
+
+- continuing the linear sweep past the int3 decoded data as instructions for
+  the whole extent, and one 400-function chunk came out at **104 MB**;
+- resuming at the next undecoded leader looked tight, since leaders come from
+  decoded branches -- but in the region of overlapping entries around
+  0x005A5840 the leaders are themselves derived from garbage, and a chunk
+  passed **60 MB** and was still growing;
+- resuming only across a run of 0xCC/0x90 does not fix the case it was written
+  for, because the gap is a code thunk.
+
+`lift32.py` also emits `return;` for an int3 now, so the unreachable
+fallthrough cannot run the next block. In isolation `sub_0066E150` goes from
+four unresolvable tail transfers to 338 instructions, 42 leaders, all placed,
+and no `RECOMP_ITAIL` at all.
 
 ### What is not the cause
 
 Ruled out by measurement, so as not to be re-guessed:
 
-- **Not the present.** The surface is black. See above.
+- **Not the present.** The surface was black, and now it is not.
 - **Not a missing script subsystem.** A probe on `GetLibrary` that reads the
   1024-entry table directly and logs every NULL shows only ids 934 and 935
   failing, twice each, in an optional-feature probe well before the script runs,
@@ -387,8 +447,10 @@ path resolution in the ini is absolute, so this is not about finding files; it
 has not been chased further because the root invocation is the one that works.
 
 Useful flags: `--scripttrace` (per-line class names, plus the `[nolib]` probe),
-`--argtrace 0x0052C300` (subsystem ids per line), `--dumpframe PATH` (the render
-target as a BMP), `--calltrace FILE`, `--nowait` (the Wait If probe).
+`--argtrace 0x0052C300` (subsystem ids per line), `--dumpframe PATH` (the frames
+the game presents, as BMPs), `--calltrace FILE`, `--waittrace` (what a Wait If
+decided), `--nowait` (stub its condition to false), and from the toolkit tracer
+`--argobj VA N` (the vtable and first 0x40 bytes of argument N).
 
 ### A build that fails without saying anything
 
@@ -402,3 +464,14 @@ directly is what says so:
 ```
 cc1.exe: error while loading shared libraries: libmpfr-6.dll: cannot open ...
 ```
+
+## Where it is now
+
+The section renders and presents. The frontier is `sub_00755280`, slot 7 of a
+secondary base of `CD3D7Renderer@RE3D` and `CD3D7GeometryRenderer@RE3D`, which
+faults on a null first argument: `sub_0071E850` reads
+`[[renderer+0xC]+0x98]`, writes it to its out parameter and returns whether it
+is non-zero, and it is zero. That pointer is the renderer's geometry buffer, so
+the next question is which RE3D setup step was supposed to allocate it and what
+this shim layer told it instead.
+
