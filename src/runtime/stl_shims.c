@@ -130,18 +130,43 @@ static int s_ptr_ok(uint32_t p) {
      * A size-header check could not: the header for a fabricated pointer lands
      * inside some other allocation's payload and passes as often as not.
      */
-    if ((p & 15u) != 1u) return 0;
-    /* -17 must still be inside the heap, and the recorded size must be one
-     * buf_new could have asked for. */
-    if (p < 0x10000011u || p + 1 >= crt_heap_end()) return 0;
-    uint32_t sz = crt_size_of(p - 1);           /* buf_new asked for cap + 2 */
-    return sz >= 2 && sz < S_MAXLEN;
+    /*
+     * Alignment and range, and nothing more. A size-header check was tried on
+     * top of this -- read crt_alloc's recorded length at p-17 and require it to
+     * be plausible -- and it rejected live strings: tens of them per frame, all
+     * with _Ptr congruent to 1 and stepping steadily up through the heap
+     * exactly as fresh allocations do. Since the guard REFUSES the operation,
+     * a false positive corrupts the very strings it is meant to protect.
+     *
+     * The alignment test is the one that earns its place: it is what rejects
+     * 0x1014AB20, the live-object address that was being written through. The
+     * size check added risk without adding catches.
+     */
+    /* `p`, not `p + 1`. A buffer that was just allocated sits right at the
+     * bump pointer: buf_new(0) asks crt_alloc for 2 bytes and returns ptr + 1,
+     * so data + 1 == heap_next exactly. Testing p + 1 rejected every
+     * freshly-made empty string -- tens per frame, all of them real. */
+    return (p & 15u) == 1u && p < crt_heap_end();
 }
 
 static int s_bad(uint32_t o) {
     if (o < S_LOW || o >= S_HIGH) return 1;
     uint32_t p = S_PTR(o);
     return (p && !s_ptr_ok(p)) || S_LEN(o) > S_MAXLEN;
+}
+
+/* Which clause rejected it, for the diagnostic. */
+static const char* s_why(uint32_t o) {
+    if (o < S_LOW || o >= S_HIGH) return "this out of range";
+    uint32_t p = S_PTR(o);
+    if (S_LEN(o) > S_MAXLEN) return "_Len implausible";
+    if (!p) return "(not bad)";
+    if (p == g_nullstr) return "(not bad: nullstr)";
+    if (p < S_LOW || p >= S_HIGH) return "_Ptr out of range";
+    if (p < 0x10000000u) return "(not bad: stack buffer)";
+    if ((p & 15u) != 1u) return "_Ptr not 1 mod 16";
+    if (p >= crt_heap_end()) return "_Ptr past the heap high-water";
+    return "(not bad)";
 }
 
 /* True when the object owns storage that can be written through. Since _Tidy
@@ -246,9 +271,9 @@ static void s_empty(uint32_t o) {
 static int s_dst_ok(uint32_t o, const char* who) {
     if (!s_bad(o)) return 1;
     fprintf(stderr, "[stl] %s on a non-string this=0x%08X (_Ptr=0x%08X"
-                    " _Len=%u) from 0x%08X\n",
+                    " _Len=%u): %s -- from 0x%08X\n",
             who, o, o >= S_LOW ? S_PTR(o) : 0, o >= S_LOW ? S_LEN(o) : 0,
-            g_cur_func);
+            s_why(o), g_cur_func);
     return 0;
 }
 

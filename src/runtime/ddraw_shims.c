@@ -1057,7 +1057,40 @@ static void gen_unimplemented(void) {
     abort();
 }
 
-static uint32_t g_vtbl_generic;
+/*
+ * DirectPlay. The game creates CLSID_DirectPlayLobby {2FE8F810-...} and
+ * CLSID_DirectPlay {D1EB6D20-...} during startup even for a single-player run,
+ * and calls slot 35 on one of them -- IDirectPlay3::EnumConnections, which asks
+ * for the list of network service providers.
+ *
+ * An empty list is the right answer here. Focom.ini says `network disabled`,
+ * and DirectPlay is a dead service anyway (see the README): whatever replaces
+ * it is a design decision, not a recompilation one. The callback is simply not
+ * invoked, and DP_OK reported.
+ *
+ * The purge count is what actually matters, and it is why the generic object
+ * aborts rather than guessing: EnumConnections takes four arguments plus this.
+ */
+static void dp_EnumConnections(void)  { RET(0); STDRET(5); }   /* DP_OK, none */
+static void dp_EnumSessions(void)     { RET(0); STDRET(6); }
+static void dp_Close(void)            { RET(0); STDRET(1); }
+static void dp_Initialize(void)       { RET(0); STDRET(2); }
+
+/* IDirectPlayLobby3 is a DIFFERENT interface with a different slot order, so
+ * it needs its own vtable -- sharing one had the lobby's RegisterApplication
+ * land on IDirectPlay's GetGroupName. */
+static void lob_RegisterApplication(void)   { RET(0); STDRET(3); }
+static void lob_UnregisterApplication(void) { RET(0); STDRET(3); }
+/*
+ * GetConnectionSettings(appID, lpData, lpdwDataSize). The game was not
+ * launched from a lobby, so the answer is DPERR_NOTLOBBIED --
+ * MAKE_DPHRESULT(1070) = MAKE_HRESULT(1, _FACDP=0x877, 1070), which is
+ * 0x8877042E. Taken from dplay.h rather than invented: a wrong DirectPlay
+ * error is the kind of thing a game switches on.
+ */
+static void lob_GetConnectionSettings(void) { RET(0x8877042Eu); STDRET(4); }
+
+static uint32_t g_vtbl_generic, g_vtbl_dplay, g_vtbl_lobby;
 
 static void generic_init(void) {
     uint32_t v = crt_alloc(GENERIC_SLOTS * 4 + 4);
@@ -1072,6 +1105,26 @@ static void generic_init(void) {
         MEM32(v + i * 4) = method(gen_unimplemented, names[i]);
     }
     g_vtbl_generic = v;
+
+    /* IDirectPlay3/4: a copy of the aborting vtable with the slots the game
+     * actually reaches filled in. */
+    uint32_t d = crt_alloc(GENERIC_SLOTS * 4 + 4);
+    memcpy((void*)(uintptr_t)ADDR(d), (void*)(uintptr_t)ADDR(v), GENERIC_SLOTS * 4);
+    MEM32(d + 4  * 4) = method(dp_Close,           "IDirectPlay::Close");
+    MEM32(d + 13 * 4) = method(dp_EnumSessions,    "IDirectPlay::EnumSessions");
+    MEM32(d + 23 * 4) = method(dp_Initialize,      "IDirectPlay::Initialize");
+    MEM32(d + 35 * 4) = method(dp_EnumConnections, "IDirectPlay::EnumConnections");
+    g_vtbl_dplay = d;
+
+    uint32_t l = crt_alloc(GENERIC_SLOTS * 4 + 4);
+    memcpy((void*)(uintptr_t)ADDR(l), (void*)(uintptr_t)ADDR(v), GENERIC_SLOTS * 4);
+    MEM32(l + 8  * 4) = method(lob_GetConnectionSettings,
+                               "IDirectPlayLobby::GetConnectionSettings");
+    MEM32(l + 16 * 4) = method(lob_RegisterApplication,
+                               "IDirectPlayLobby::RegisterApplication");
+    MEM32(l + 17 * 4) = method(lob_UnregisterApplication,
+                               "IDirectPlayLobby::UnregisterApplication");
+    g_vtbl_lobby = l;
 }
 
 /*
@@ -1082,9 +1135,14 @@ static void generic_init(void) {
  */
 uint32_t ddraw_cocreate(uint32_t clsid_guid) {
     if (!g_vtbl_generic) generic_init();
-    uint32_t o = obj_new(g_vtbl_generic, KIND_DD);
-    fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> 0x%08X (generic)\n",
-            clsid_guid, o);
+    /* The first dword is enough to tell the two DirectPlay classes apart. */
+    uint32_t vt = g_vtbl_generic;
+    const char* what = "generic";
+    if (clsid_guid == 0xD1EB6D20u)      { vt = g_vtbl_dplay; what = "IDirectPlay"; }
+    else if (clsid_guid == 0x2FE8F810u) { vt = g_vtbl_lobby; what = "IDirectPlayLobby"; }
+    uint32_t o = obj_new(vt, KIND_DD);
+    fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> 0x%08X (%s)\n",
+            clsid_guid, o, what);
     return o;
 }
 
