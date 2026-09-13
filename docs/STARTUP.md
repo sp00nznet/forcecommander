@@ -72,47 +72,65 @@ without a word.
 
 ## Where it stops today
 
-The startup script now runs to its last line and the process exits cleanly,
-having executed **8,944,137 lifted calls across 3,866 distinct functions** and
-opened its own content: `project.gam`, the `Focom Translation` text files, and
-**`forcecommand.rpk` with 288,585 reads** -- the 274 MB archive, in exactly the
-directory format `tools/rpk.py` decodes.
+The game boots, loads, and starts its first mission. It then exits cleanly.
 
-It renders nothing, and the reason is specific. `Run 2 1 6` is
-`GamePPProdStartup` vtable slot 19 (`sub_005026D0`), which does only this:
+`Run 2 1 6` is `GamePPProdStartup` slot 19, forwarding to `GamePPProdBase`
+slot 61 (`sub_0051CE70`), which ends by calling slot 14 on the object at
+`GamePPProdBase + 0x94`. That object is the **GamePPVisProcessManager**
+(vtable 0x007C58B4), and slot 14 is `sub_0052B410` -- start a process.
 
-    ecx = [this + 0x14]          ; the GamePPProdBase
-    if (!ecx) return
-    call [ecx_vtbl + 0xF4](2, 1, 6)   ; GamePPProdBase slot 61, sub_0051CE70
+**The three numbers are an object template ID.** `.pro` files key `id` and
+`inheritID` as triples, and template `2 1 6` is `Trasse - Day/info.pro`: the
+opening mission. So the last live line of Focom.ini means "boot the Trasse
+mission", and it works -- the lookup scans the compiled template database,
+finds it, allocates, and registers a process.
 
-and `sub_0051CE70` ends:
+What then happens, per `--calltrace` with thread tags:
 
-    ecx = [this + 0x94]
-    if (!ecx) goto epilogue      ; <-- taken
-    ...
-    call [ecx_vtbl + 0x38](this, &state)   ; the main loop
+| | |
+|---|---:|
+| main thread calls | 7,356,408 |
+| service thread calls | 6 (parked in its wait loop, correct) |
+| **mission process calls** | **590,206** |
+| object templates compiled | 1,713 |
+| `.rpk` reads | 288,585 |
+| heap high-water | 200 MB over 692,799 allocations |
 
-`GamePPProdBase + 0x94` is the **GamePPVisObjectTemplateManager**, and it is
-null by the time Run asks for it. The sequence, from a `--poison` on that slot
-against the call trace:
+The mission process is an OS thread. Its routine runs the mission's boot script
+to completion and returns; `sub_005510F0` then signals the process's completion
+event, the manager reaps the process, the live-process count
+(`sub_0052B6B0`, which counts non-null entries in a 16-slot array at
+`[mgr+0xC]`) drops to zero, the main thread's loop in `sub_005003CD` ends, and
+WinMain returns. `exit(0)` comes from `0x0056EB66` -- the CRT's
+`exit(WinMain(...))`. Nothing is wrong with the shutdown; the game finished
+what it was asked to do.
 
-| trace index | what |
-|---|---|
-| 20,097 | `sub_0052B910` (GamePPVisObjectTemplateManager) creates it; `+0x94 = 0x1014E140` |
-| 115,999 | `GamePPProdBase` slot 186 (`sub_0051DE00`) releases it and nulls `+0x94` |
-| 4,692,711 | `Run` finds it null and returns |
-| 8,635,133 | `sub_00519C50`, the real teardown, runs at the end |
+So the question is why the mission's script terminates instead of looping, and
+the honest answer is that it is not yet known. Two things are established:
 
-The nulling at 115,999 is not a bug: slot 186 is called deliberately from
-`GamePPProdStartup` slot 12 (`sub_00501DB0`, at 0x00501ED9) after two virtual
-checks pass, as a reset before loading a program -- the code that follows it
-goes on to `sub_00520370` and `sub_0053DCB0`. So the question is not why it is
-cleared but **what should re-create it on the load-program path, and why that
-does not happen.** That is the next thread, and it is game logic rather than
-shim fidelity.
+- **It is not the frame tick.** `sub_0051D480` -- the base's slot 62, which the
+  loop calls with elapsed seconds -- runs exactly once, between the count
+  returning 1 and returning 0. The loop is willing to keep ticking; there is
+  nothing left to tick.
+- **It is not a wall-clock timeout.** Ronin's queue-consumer body
+  (`sub_005518C0`) is `WaitForSingleObject(mutex, 100)` and returns on timeout,
+  which looked like an obvious candidate given that this machine serialises
+  lifted code. `--waitscale 100` changes nothing, so that is not it.
 
-Two things are known not to be the cause: `<Bad Template>` (0x0083EEA8, in
-`sub_0051D530`) never executes, and the game never calls `GetMessage`,
-`PeekMessage` or `DispatchMessage` at all -- so it is not losing a message
-loop, it never starts one, because Run returns before reaching it.
+What is suspicious is that **no Direct3D device is ever created.** The game
+enumerates one and accepts it -- `sub_0076ACC0` compares the offered
+`deviceGUID` against four it knows (TnLHal, HAL, RGB, Ref; RGB is offered and
+matches, landing in device slot `+0x44C`) -- then releases IDirect3D7 without
+calling `CreateDevice`, and never calls `SetDisplayMode`, `Lock`, `Blt` or
+`Flip`. A mission script whose first act is to set up rendering would explain
+both the absence of drawing and a script that ends early. That is the thread to
+pull next.
 
+### A correction
+
+An earlier version of this document said `GamePPProdBase + 0x94` was null at
+`Run` and named that as the cause. It is not null. That conclusion came from
+`--poison` on an address captured in a *different run*, and allocation order
+varies once the game's own threads are running. Read in a single run with
+`--watch`, the slot holds a live GamePPVisProcessManager. Poison and watch
+addresses are only comparable within one process.
