@@ -74,6 +74,17 @@ def true_extent(md, code, cs, ce, start, hard_end, entries):
     the window, and the answer is the highest address actually reached. Data
     past the real end is never entered, so it never widens the result.
 
+    Returns `(top, clean)`. `clean` is False when no path reached a terminator,
+    which would be how a too-small `hard_end` announced itself. Measured: it
+    happens for 14 of 38,908 bodies, all one-block fragments at false starts,
+    and raising the bound for them changes the generated C by nothing. So the
+    catalog's `end` is trustworthy and this is a health metric, not a fix.
+
+    It is not the same thing as a body ending on a `lea` in the generated C --
+    that reads as truncation and is not. An indirect tail call (`jmp [eax+0x18]`
+    -- every vtable thunk in this binary) emits as an ITAIL dispatch block, so
+    the last instruction *comment* in the body is the one before the jump.
+
     `entries` is what keeps a tail call from swallowing its target. `jmp f` where
     f is another catalogued function is a call that will not return, not an
     intra-function branch, and following it walks straight into the next
@@ -94,6 +105,7 @@ def true_extent(md, code, cs, ce, start, hard_end, entries):
     # then stored the result through a clobbered ebp and faulted.
     view = memoryview(code)
     seen, work, top = set(), [start], start
+    clean = False          # did any path stop at a terminator, or only at hard_end?
     while work:
         va = work.pop()
         if va in seen or not (start <= va < hard_end):
@@ -109,18 +121,21 @@ def true_extent(md, code, cs, ce, start, hard_end, entries):
             if ins.operands and ins.operands[0].type == X86_OP_IMM:
                 t = ins.operands[0].imm & 0xFFFFFFFF
             if m in ('ret', 'retn', 'retf', 'iret', 'int3', 'hlt'):
+                clean = True
                 break
             if m == 'jmp':
                 if (t is not None and start < t < hard_end
                         and t not in entries):
                     work.append(t)          # intra-function
+                else:
+                    clean = True            # a tail call ends the body
                 break                       # unconditional: no fallthrough
             if (m in _COND and t is not None and start < t < hard_end
                     and t not in entries):
                 work.append(t)
             if ins.address + ins.size >= hard_end:
                 break
-    return top
+    return top, clean
 
 
 def closure(funcs, roots, limit):
@@ -248,12 +263,14 @@ def main():
     next_start = {a: (ordered[i + 1] if i + 1 < len(ordered) else ce)
                   for i, a in enumerate(ordered)}
 
-    clamped = extended = 0
+    clamped = extended = no_terminator = 0
     for addr in sorted(chosen_set):
         f = byaddr[addr]
         name = 'sub_%08X' % addr
         hard = min(f['end'], ce)
-        end = true_extent(md, code, cs, ce, addr, hard, entry_set)
+        end, clean = true_extent(md, code, cs, ce, addr, hard, entry_set)
+        if not clean:
+            no_terminator += 1
         if end < hard:
             clamped += 1
         if end > next_start[addr]:
@@ -350,8 +367,9 @@ def main():
               open(os.path.join(_HERE, 'analysis', 'phase3_codegen.json'), 'w'),
               indent=1)
     print('=' * 60)
-    print('  extents shorter than the catalog bound: %d  '
-          '(bodies spanning a false entry: %d)' % (clamped, extended))
+    print('  extents shorter than the catalog bound: %d  (bodies spanning a'
+          ' false entry: %d, never reached a terminator: %d)'
+          % (clamped, extended, no_terminator))
     print('  lifted %d   not-lifted stubs %d   errors %d   files %d'
           % (len(chosen_set), len(stubs), errors, idx))
     print('  %s lines of C, %.1f MB, %.1fs'

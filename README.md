@@ -215,45 +215,94 @@ not as a seeding input.
 
 The splash screen was reachable because it is a closed loop: one dialog
 procedure, two GDI calls, a resource already inside the exe. Nothing else in
-this binary is like that. Honest inventory of what stands between here and a
-mission running, roughly in dependency order:
+this binary is like that. The inventory below was written when only that loop
+worked; the status column is what happened since.
 
-| # | Work | Size |
+| # | Work | Status |
 |---|---|---|
-| 1 | **The function catalog.** `disasm32.py` over 3.94 MB takes ~40 min and 3 GB. Needed before any closure can be computed. | running |
-| 2 | **Lift the startup closure** and walk the failures. `RECOMP_NOT_LIFTED` and the refusing import stubs exist so each run names the next thing to fix. | iterative |
-| 3 | **58 `__thiscall` MSVCP60 shims.** `basic_string`, `basic_fstream`, `ios_base`. Each needs its argument *byte* count, which the mangled name does not give, and real semantics. `_initterm` hits these first. | the wall |
-| 4 | **DirectDraw 7 over the DIB.** `DDRAW.DLL` arrives by `LoadLibrary` + `GetProcAddress`, so the interception point is those two calls; then `DirectDrawCreate` has to return a COM object whose vtable the lifted code calls through. RECON.md's finding that `CDD7MemRenderer` exists is what makes this tractable — the game has a software path, so the surface can be our own memory. | large |
-| 5 | **The `.rpk` reader.** 274 MB, and nothing loads without it. RECON.md maps the header, the name list and the 7,000-entry string table; the fixed-size records past the strings are not done. | medium |
-| 6 | **Stubs that must not lie:** DirectInput, Miles (22 entries), SMUSH, DirectPlay. Returning "no device" cleanly is usually enough, and DirectPlay is a dead service anyway. | small |
-| 7 | **Whatever the lifter gets wrong across 34,674 functions.** Fury3 needed a carry-flag model settled by measurement and a dozen CRT functions host-shimmed, at 1,945 functions. This is 18× that. | unknown |
+| 1 | **The function catalog.** Needed before any closure can be computed. | **done** — 38,908 entries |
+| 2 | **Lift the startup closure** and walk the failures. | **done, and then some** — the whole binary lifts, 10.7M lines of C, 0 errors |
+| 3 | **58 `__thiscall` MSVCP60 shims** — "the wall". | **done** — real `basic_string` with the MSVC 6 COW layout. What is left of MSVCP60 is data symbols (vtables, `npos`, `_Nullstr`), not code |
+| 4 | **DirectDraw 7 over the DIB.** | **done** — COM object model in the target address space, 640×480 16bpp primary surface, device enumeration, `GetCaps` |
+| 5 | **The `.rpk` reader.** 274 MB, and nothing loads without it. | **done** — `tools/rpk.py`; 9,554 members tile the archive with no gap and no overlap |
+| 6 | **Stubs that must not lie:** DirectInput, Miles (22), SMUSH, DirectPlay. | **partly** — Miles and WINMM are still stubs; nothing has needed them yet |
+| 7 | **Whatever the lifter gets wrong across 34,674 functions.** | **two found, two fixed** — see below |
 
-Item 3 is the real gate, and item 7 is the real risk. Neither is a reason not to
-proceed; both are a reason not to promise a date.
+Item 3 was called the real gate and item 7 the real risk. That was the wrong way
+round. The STL came out in a day; the lifter bugs were the expensive part, and
+both of them truncated function bodies *silently*, so the generated C compiled,
+ran, and quietly did less than the original:
+
+- a fixed 512-byte window in the recursive descent, which cut every body with a
+  longer straight run — **WinMain lost everything past 0x004012AE** and fell off
+  its own end into the CRT, which then stored the result through a clobbered
+  `ebp`;
+- the tail-call guard being given the catalog's 4,234 `alias` entries, so a
+  `jmp` to a second entry point of the *same* function ended the descent, and
+  the arm reachable only through it became an unresolved `ITAIL` at runtime.
+
+A third was chased and turned out not to exist. 4,025 bodies appear to end on a
+`lea`, which cannot end a function, and that looked like the catalog's `end`
+being too small — but an indirect tail call (`jmp [eax+0x18]`, which is every
+vtable thunk in this binary) emits as an `ITAIL` dispatch block, so the last
+instruction *comment* in the body is the one before the jump. Measured properly,
+**14 of 38,908** bodies never reach a terminator, all one-block fragments at
+false starts, and raising the bound for them changes the generated C by nothing.
+The catalog's `end` is trustworthy. `run_lift.py` now reports the number and
+leaves it alone.
+
+The other finding is that not one of the sixteen blockers between the splash
+screen and here was a defect in the lifted code. Every one was an infidelity in
+a hand-written Windows or CRT reimplementation. `docs/STL-GATE.md` argues from
+that to a 32-bit host, and the argument has only got stronger.
+
+### Where it actually stops
+
+The game now runs **its own startup**, driven by its own script — see
+[`docs/STARTUP.md`](docs/STARTUP.md), which is the other thing that had to be
+recovered: `Focom.ini` is not a settings file but a directive list, and the disc
+ships it as zero bytes because the installer writes it.
+
+```
+CheckAppMutex FORCE       -> CreateMutexA
+CheckCD <installdir>      -> GetVolumeInformationA, label FOCOM_1
+LoadAppFileName ...       -> reads Resourceppname.ini
+ShowLoadingPanel          -> CreateDialogParamA(101), dialog procedure
+                             0x00401770 -- lifted -- and it paints
+InitBase                  -> builds GamePPProdBase, creates its registry key
+```
+
+It stops in the construction of `GamePPSysLibrary` (vtable `0x007C4558`), which
+receives a `GamePPProdBase*` that points at string data.
+
+The one structural difference from a real run: **`CreateThread` does not run the
+thread.** The machine state is a single set of globals, so a host thread
+executing lifted code would race the main one on every register, and running
+the routine synchronously does not terminate — what `InitBase` creates is a
+service loop. Making the machine state thread-local is the next structural
+decision, and it is independent of the 32-bit question.
 
 ## Where it goes next
 
-1. **Regenerate the catalog and merge the names.** `disasm32.py` over 3.94 MB is
-   a long run (>20 min) and its output is not committed; `pe/debug_symbols.py`
-   and `pe/merge_names.py` both need it:
-   ```sh
-   python ../tools/tools/disasm/disasm32.py game/Focom.exe -o analysis/functions.json
-   python ../tools/tools/pe/debug_symbols.py game/Focom.exe \
-          --functions analysis/functions.json -o analysis/src_files.json
-   python ../tools/tools/pe/merge_names.py --source rtti=analysis/rtti.json \
-          --files analysis/src_files.json -o analysis/names.json
-   ```
-   Do **not** pass `--seed-functions`; the section above is why.
-2. **Split the work by library, not by address.** `Ronin::` first — 75 classes
-   of filesystem, threading, bitmap loading and math with no game logic in them,
-   and `CRPKPackFile` is needed before any asset loads. Then `GamePPSys*` (67),
-   which is the bottom of the framework dependency graph.
-3. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
+In order, and the first two are the ones that matter:
+
+1. **Find out what `GamePPSysLibrary`'s constructor should have been handed.**
+   The object it gets points at string data, and the struct that carries it was
+   built on a stack region the game had just used for a `WIN32_FIND_DATAA`, so
+   its `basic_string` members were never constructed. The tools to chase it are
+   in place: `--calltrace`, `--watch VA`, `--poison ADDR [--poisonval V]`,
+   `--stlwatch ADDR`, and an `addr2line`-able address on every fault.
+2. **Decide about threads.** `CreateThread` is not honoured because the machine
+   state is a single set of globals. If the service loop `InitBase` starts is
+   what registers the system libraries, that decision has to come first, and it
+   means per-thread registers and per-thread simulated stacks.
+3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
+   and returning "no device" cleanly should be enough for a first frame.
+4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
    that a first playable does not need. Free.
-4. **Finish the `.rpk` directory layout.** RECON.md maps the header, the name
-   list and the string table; the fixed-size records past the strings are not
-   done. Nothing loads until they are.
 5. **Plan interface shims, not import shims** — and start at `CDD7MemRenderer`.
+   `docs/STL-GATE.md` makes the case for going further and loading the real
+   32-bit DLLs instead.
 6. **DirectPlay is a dead service.** Whatever replaces it is a design decision,
    not a recompilation one.
 7. Disc 2 has not been unpacked.
