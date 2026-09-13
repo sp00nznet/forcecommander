@@ -221,6 +221,33 @@ of **25 lines stops after line 6**. It does not run out of lines; it stops. Line
 defined in the workspace rather than a built-in. That is the next thread to
 pull: what line 6 calls, and why the block never reaches line 7.
 
+### The frontier, precisely
+
+The renderer is not idle: `CD3D7Renderer`'s per-frame statistics objects run --
+`CFrameRateStat@DX7`, `CMultiTimerStat@W4ERenderTimerStages@...`,
+`CMultiCountStat@W4ERenderMemStages@...` -- so frames are being ticked. What is
+missing is the present.
+
+The screen the game creates is a **`CDD7FSScreen`** (it is `sub_00735D90`, slot
+2, that calls `SetDisplayMode`). Its vtable is 0x007D87A0, and slot 10 at
++0x28 is `sub_007363B0`:
+
+```
+GetAttachedSurface      surface vtable +0x30
+Flip                    surface vtable +0x2C     <- the present
+<error processor>
+```
+
+**`sub_007363B0` is never called.** Nor is slot 11 (`sub_007363E0`). Of the
+screen's sixteen slots only 1, 2, 5, 6, 8, 12 and 14 ever run -- construction,
+mode set, cooperative-level and lost checks, GetSurfaceDesc, GetAttachedSurface
+-- and nothing that puts a frame on the display.
+
+There is a caller for a screen's slot 10 that does run: `sub_007354B0`, eight
+times. Since `sub_007363B0`'s count is zero, the object it presents is not this
+screen. That is the next thing to read: what `sub_007354B0` is holding, and how
+the frame loop is supposed to reach `CDD7FSScreen::Present`.
+
 Also outstanding: the run now faults during *shutdown*, in `sub_0074E020`
 reading through a low pointer with `free` as the last import. That is a
 teardown-order problem, not a blocker, and it only appears because the game now
