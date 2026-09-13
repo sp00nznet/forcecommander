@@ -61,6 +61,8 @@
 #include "imports.h"
 
 uint32_t crt_alloc(uint32_t n);          /* crt_shims.c */
+uint32_t crt_size_of(uint32_t ptr);
+uint32_t crt_heap_end(void);
 
 #define NPOS 0xFFFFFFFFu
 
@@ -100,7 +102,29 @@ static void stlw(const char* what, uint32_t o, uint32_t n) {
 #define S_HIGH 0x18000000u
 #define S_MAXLEN 0x08000000u
 
-static int s_ptr_ok(uint32_t p) { return p >= S_LOW && p < S_HIGH; }
+/*
+ * A real _Ptr points at a buf_new() allocation -- one refcount byte, the data,
+ * a NUL -- or at g_nullstr. So the allocator's own size header can confirm it,
+ * and that is what separates a live string buffer from an integer that happens
+ * to land in the heap.
+ *
+ * This is the check that matters. A range test alone passed a _Ptr of
+ * 0x1014AB20, which was not a buffer at all: it was the address of the live
+ * GamePPProdBase object, sitting in an uninitialised string's _Ptr field. The
+ * next assign() wrote "Unloading..." over that object's vtable pointer, and the
+ * game faulted several thousand calls later making a virtual call through it.
+ * The corruption and the crash had nothing recognisable in common.
+ */
+static int s_ptr_ok(uint32_t p) {
+    if (p == g_nullstr) return 1;
+    if (p < S_LOW || p >= S_HIGH) return 0;
+    if (p < 0x10000000u) return 1;              /* a stack buffer: unowned */
+    /* +17 so the size header at p-1-16 is inside the heap and not a read of
+     * unmapped memory below it. */
+    if (p < 0x10000011u || p + 1 >= crt_heap_end()) return 0;
+    uint32_t sz = crt_size_of(p - 1);           /* buf_new asked for cap + 2 */
+    return sz >= 2 && sz < S_MAXLEN;
+}
 
 static int s_bad(uint32_t o) {
     if (o < S_LOW || o >= S_HIGH) return 1;

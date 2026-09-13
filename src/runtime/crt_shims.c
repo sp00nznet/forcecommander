@@ -72,9 +72,13 @@ uint32_t crt_alloc(uint32_t n) {
     return ptr;
 }
 
-static uint32_t crt_size_of(uint32_t ptr) {
+/* The size crt_alloc recorded for a block. stl_shims.c uses it to tell a
+ * real string buffer from an integer that happens to land in the heap. */
+uint32_t crt_size_of(uint32_t ptr) {
     return ptr ? MEM32(ptr - 16) : 0;
 }
+
+uint32_t crt_heap_end(void) { return heap_next; }
 
 void crt_heap_stats(void) {
     printf("  heap: %u allocations, %u bytes high-water\n", heap_allocs, heap_peak);
@@ -611,6 +615,100 @@ static void crt_mktime(void) {
     MEM32(o + 28) = (uint32_t)t.tm_yday;
     RET((uint32_t)(int32_t)r); CDECLRET();
 }
+
+
+/* ------------------------------------------- Miles, WINMM and ShellExecute
+
+ * Silent, but honest. These are the last of the imports whose generated stub
+ * returns 0 without filling anything in, and 0 is the wrong answer for most of
+ * them: AIL_startup returning 0 reads as "the sound system failed to start",
+ * which is not the same as "there is no sound card".
+ *
+ * ponytail: no audio is produced. The Miles API is answered the way a working
+ * driver with no output device would answer it -- startup succeeds, a sample
+ * handle is a real (if inert) allocation so the game can set properties on it,
+ * and every sample reports itself finished. Playing sound means either loading
+ * the real mss32.dll (it is on the disc, and a 32-bit host could) or decoding
+ * the formats; neither is on the way to a first frame.
+ *
+ * Miles exports are decorated `@N`, so the purge counts come from the names and
+ * are not guesses.
+ */
+#define SMP_DONE 2
+
+static void ail_startup(void)        { RET(1); STDRET(0); }
+static void ail_shutdown(void)       { RET(0); STDRET(0); }
+static void ail_last_error(void)     { RET(0); STDRET(0); }   /* NULL = no error */
+static void ail_set_preference(void) { (void)ARG(0); RET(0); STDRET(2); }
+static void ail_waveOutOpen(void) {
+    /* (driver**, wave_out**, index, format): hand back one inert driver. */
+    if (ARG(0)) MEM32(ARG(0)) = crt_alloc(64);
+    if (ARG(1)) MEM32(ARG(1)) = 0;
+    RET(0); STDRET(4);                                        /* M_OK */
+}
+static void ail_waveOutClose(void)   { (void)ARG(0); RET(0); STDRET(1); }
+static void ail_digital_handle_release(void) { RET(0); STDRET(1); }
+static void ail_digital_handle_reacquire(void) { RET(0); STDRET(1); }
+static void ail_get_DirectSound_info(void) {
+    /* (sample, &dsound, &dsbuffer) -- both out pointers, and a stub that left
+     * them alone had the game read stack garbage as COM interfaces. */
+    if (ARG(1)) MEM32(ARG(1)) = 0;
+    if (ARG(2)) MEM32(ARG(2)) = 0;
+    RET(0); STDRET(3);
+}
+static void ail_set_DirectSound_HWND(void) { RET(0); STDRET(2); }
+
+/* A sample handle has to be non-NULL and writable: the game sets a file, a
+ * volume, a pan and a loop count on it before playing. 128 bytes of target heap
+ * is enough for it to scribble on. */
+static void ail_allocate_sample_handle(void) { RET(crt_alloc(128)); STDRET(1); }
+static void ail_release_sample_handle(void)  { (void)ARG(0); RET(0); STDRET(1); }
+static void ail_init_sample(void)            { RET(0); STDRET(1); }
+static void ail_set_sample_file(void)        { RET(1); STDRET(3); }   /* accepted */
+static void ail_set_named_sample_file(void)  { RET(1); STDRET(5); }
+static void ail_start_sample(void)           { RET(0); STDRET(1); }
+static void ail_end_sample(void)             { RET(0); STDRET(1); }
+static void ail_sample_status(void)          { RET(SMP_DONE); STDRET(1); }
+static void ail_set_sample_volume(void)      { RET(0); STDRET(2); }
+static void ail_set_sample_pan(void)         { RET(0); STDRET(2); }
+static void ail_set_sample_loop_count(void)  { RET(0); STDRET(2); }
+static void ail_set_sample_playback_rate(void) { RET(0); STDRET(2); }
+
+/* ------------------------------------------------------------------ WINMM */
+
+static void mm_timeBeginPeriod(void) { RET(0); STDRET(1); }   /* TIMERR_NOERROR */
+static void mm_timeEndPeriod(void)   { RET(0); STDRET(1); }
+static void mm_timeGetDevCaps(void) {
+    /* TIMECAPS is two UINTs. A stub leaving it alone gave the game a minimum
+     * period of whatever was on the stack. */
+    if (ARG(0) && ARG(1) >= 8) {
+        MEM32(ARG(0)) = 1;                                    /* wPeriodMin */
+        MEM32(ARG(0) + 4) = 1000000;                          /* wPeriodMax */
+    }
+    RET(0); STDRET(2);
+}
+static void mm_timeSetEvent(void) {
+    /*
+     * ponytail: the timer is never delivered. The callback is lifted code and
+     * would have to run on a host timer thread, which the single machine state
+     * rules out for the same reason CreateThread does. A non-zero id is
+     * returned because 0 means "could not create the timer", and the game
+     * treats that as a fatal audio error rather than as a missing tick.
+     */
+    static uint32_t next_id = 1;
+    RET(next_id++); STDRET(5);
+}
+static void mm_timeKillEvent(void) { (void)ARG(0); RET(0); STDRET(1); }
+static void mm_PlaySoundA(void)    { RET(1); STDRET(3); }
+static void mm_mciSendStringA(void) {
+    /* The game drives CD audio through MCI ("open cdaudio", "play cdaudio
+     * from %d to %d"). Report success and clear the reply buffer, which a stub
+     * left holding stack contents for the game to parse. */
+    if (ARG(1) && ARG(2)) memset((void*)(uintptr_t)ADDR(ARG(1)), 0, ARG(2));
+    RET(0); STDRET(4);
+}
+
+static void sh_ShellExecuteA(void) { RET(42); STDRET(6); }    /* >32 = success */
 
 
 /* ------------------------------------------------- KERNEL32 sync and files
@@ -1387,6 +1485,36 @@ const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
     { "KERNEL32.dll!LocalFileTimeToFileTime",  k32_LocalFileTimeToFileTime },
     { "KERNEL32.dll!FileTimeToSystemTime",   k32_FileTimeToSystemTime },
     { "KERNEL32.dll!SystemTimeToFileTime",   k32_SystemTimeToFileTime },
+    { "mss32.dll!_AIL_startup@0",                  ail_startup },
+    { "mss32.dll!_AIL_shutdown@0",                 ail_shutdown },
+    { "mss32.dll!_AIL_last_error@0",               ail_last_error },
+    { "mss32.dll!_AIL_set_preference@8",           ail_set_preference },
+    { "mss32.dll!_AIL_waveOutOpen@16",             ail_waveOutOpen },
+    { "mss32.dll!_AIL_waveOutClose@4",             ail_waveOutClose },
+    { "mss32.dll!_AIL_digital_handle_release@4",   ail_digital_handle_release },
+    { "mss32.dll!_AIL_digital_handle_reacquire@4", ail_digital_handle_reacquire },
+    { "mss32.dll!_AIL_get_DirectSound_info@12",    ail_get_DirectSound_info },
+    { "mss32.dll!_AIL_set_DirectSound_HWND@8",     ail_set_DirectSound_HWND },
+    { "mss32.dll!_AIL_allocate_sample_handle@4",   ail_allocate_sample_handle },
+    { "mss32.dll!_AIL_release_sample_handle@4",    ail_release_sample_handle },
+    { "mss32.dll!_AIL_init_sample@4",              ail_init_sample },
+    { "mss32.dll!_AIL_set_sample_file@12",         ail_set_sample_file },
+    { "mss32.dll!_AIL_set_named_sample_file@20",   ail_set_named_sample_file },
+    { "mss32.dll!_AIL_start_sample@4",             ail_start_sample },
+    { "mss32.dll!_AIL_end_sample@4",               ail_end_sample },
+    { "mss32.dll!_AIL_sample_status@4",            ail_sample_status },
+    { "mss32.dll!_AIL_set_sample_volume@8",        ail_set_sample_volume },
+    { "mss32.dll!_AIL_set_sample_pan@8",           ail_set_sample_pan },
+    { "mss32.dll!_AIL_set_sample_loop_count@8",    ail_set_sample_loop_count },
+    { "mss32.dll!_AIL_set_sample_playback_rate@8", ail_set_sample_playback_rate },
+    { "WINMM.dll!timeBeginPeriod",                 mm_timeBeginPeriod },
+    { "WINMM.dll!timeEndPeriod",                   mm_timeEndPeriod },
+    { "WINMM.dll!timeGetDevCaps",                  mm_timeGetDevCaps },
+    { "WINMM.dll!timeSetEvent",                    mm_timeSetEvent },
+    { "WINMM.dll!timeKillEvent",                   mm_timeKillEvent },
+    { "WINMM.dll!PlaySoundA",                      mm_PlaySoundA },
+    { "WINMM.dll!mciSendStringA",                  mm_mciSendStringA },
+    { "SHELL32.dll!ShellExecuteA",                 sh_ShellExecuteA },
     { "MSVCRT.dll!_purecall",                    crt_purecall },
     { "MSVCRT.dll!_callnewh",                    crt_callnewh },
     { "MSVCRT.dll!?terminate@@YAXXZ",            crt_terminate },
