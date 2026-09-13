@@ -45,6 +45,134 @@ HAND_ARGC = {
     ('DINPUT.dll', 'DirectInputCreateA'): 4,
 }
 
+# __thiscall members whose purge count is not derivable from the mangled
+# name (see docs/STL-GATE.md). Read off the signature by hand: `this` arrives
+# in ecx and is not a popped slot, every parameter here is one 4-byte slot,
+# and a by-value return adds a hidden return-buffer pointer.
+#
+# Deriving these automatically needs a real MSVC demangler, and the table
+# gets written by hand anyway because each of these also needs a body --
+# whoever writes the body knows the signature. So it is written once, here,
+# with the signature beside it so it can be checked by eye.
+HAND_THISCALL = {
+    # basic_filebuf(FILE*)
+    ('MSVCP60.dll', '??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z'): 1,
+    # basic_ios()
+    ('MSVCP60.dll', '??0?$basic_ios@DU?$char_traits@D@std@@@std@@IAE@XZ'): 0,
+    # basic_iostream(streambuf*)
+    ('MSVCP60.dll', '??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z'): 1,
+    # string(const string&)
+    ('MSVCP60.dll', '??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV01@@Z'): 1,
+    # string(const allocator&)
+    ('MSVCP60.dll', '??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z'): 1,
+    # string(const char*, const allocator&)
+    ('MSVCP60.dll', '??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@PBDABV?$allocator@D@1@@Z'): 2,
+    # ios_base::Init()
+    ('MSVCP60.dll', '??0Init@ios_base@std@@QAE@XZ'): 0,
+    # _Lockit()
+    ('MSVCP60.dll', '??0_Lockit@std@@QAE@XZ'): 0,
+    # _Winit()
+    ('MSVCP60.dll', '??0_Winit@std@@QAE@XZ'): 0,
+    # ios_base()
+    ('MSVCP60.dll', '??0ios_base@std@@IAE@XZ'): 0,
+    # ~basic_filebuf()
+    ('MSVCP60.dll', '??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ'): 0,
+    # ~basic_fstream()
+    ('MSVCP60.dll', '??1?$basic_fstream@DU?$char_traits@D@std@@@std@@UAE@XZ'): 0,
+    # ~basic_ios()
+    ('MSVCP60.dll', '??1?$basic_ios@DU?$char_traits@D@std@@@std@@UAE@XZ'): 0,
+    # ~basic_iostream()
+    ('MSVCP60.dll', '??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ'): 0,
+    # ~basic_streambuf()
+    ('MSVCP60.dll', '??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ'): 0,
+    # ~string()
+    ('MSVCP60.dll', '??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ'): 0,
+    # ~ios_base::Init()
+    ('MSVCP60.dll', '??1Init@ios_base@std@@QAE@XZ'): 0,
+    # ~_Lockit()
+    ('MSVCP60.dll', '??1_Lockit@std@@QAE@XZ'): 0,
+    # ~_Winit()
+    ('MSVCP60.dll', '??1_Winit@std@@QAE@XZ'): 0,
+    # ~ios_base()
+    ('MSVCP60.dll', '??1ios_base@std@@UAE@XZ'): 0,
+    # ~locale()
+    ('MSVCP60.dll', '??1locale@std@@QAE@XZ'): 0,
+    # string::operator=(const char*)
+    ('MSVCP60.dll', '??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z'): 1,
+    # string::operator[](size_t) const
+    ('MSVCP60.dll', '??A?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEABDI@Z'): 1,
+    # string::operator+=(const string&)
+    ('MSVCP60.dll', '??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@ABV01@@Z'): 1,
+    # string::operator+=(const char*)
+    ('MSVCP60.dll', '??Y?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z'): 1,
+    # basic_fstream vbase dtor
+    ('MSVCP60.dll', '??_D?$basic_fstream@DU?$char_traits@D@std@@@std@@QAEXXZ'): 0,
+    # string default-ctor closure
+    ('MSVCP60.dll', '??_F?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXXZ'): 0,
+    # string::_Copy(size_t)
+    ('MSVCP60.dll', '?_Copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z'): 1,
+    # string::_Eos(size_t)
+    ('MSVCP60.dll', '?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z'): 1,
+    # string::_Freeze()
+    ('MSVCP60.dll', '?_Freeze@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ'): 0,
+    # string::_Grow(size_t, bool)
+    ('MSVCP60.dll', '?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z'): 2,
+    # string::_Refcnt(const char*)
+    ('MSVCP60.dll', '?_Refcnt@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEAAEPBD@Z'): 1,
+    # string::_Split()
+    ('MSVCP60.dll', '?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ'): 0,
+    # string::_Tidy(bool)
+    ('MSVCP60.dll', '?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z'): 1,
+    # string::append(const string&, size_t, size_t)
+    ('MSVCP60.dll', '?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z'): 3,
+    # string::append(size_t, char)
+    ('MSVCP60.dll', '?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z'): 2,
+    # string::append(const char*, size_t)
+    ('MSVCP60.dll', '?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z'): 2,
+    # string::assign(const string&, size_t, size_t)
+    ('MSVCP60.dll', '?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z'): 3,
+    # string::assign(const char*)
+    ('MSVCP60.dll', '?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z'): 1,
+    # string::assign(const char*, size_t)
+    ('MSVCP60.dll', '?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z'): 2,
+    # basic_ios::clear(int, bool)
+    ('MSVCP60.dll', '?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z'): 2,
+    # ios_base::clear(int, bool)
+    ('MSVCP60.dll', '?clear@ios_base@std@@QAEXH_N@Z'): 2,
+    # basic_filebuf::close()
+    ('MSVCP60.dll', '?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ'): 0,
+    # string::copy(char*, size_t, size_t) const
+    ('MSVCP60.dll', '?copy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPADII@Z'): 3,
+    # string::erase(size_t, size_t)
+    ('MSVCP60.dll', '?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z'): 2,
+    # string::find(const char*, size_t, size_t) const
+    ('MSVCP60.dll', '?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z'): 3,
+    # string::find_first_not_of(...)
+    ('MSVCP60.dll', '?find_first_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z'): 3,
+    # string::find_first_of(...)
+    ('MSVCP60.dll', '?find_first_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z'): 3,
+    # string::find_last_not_of(...)
+    ('MSVCP60.dll', '?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z'): 3,
+    # string::find_last_of(...)
+    ('MSVCP60.dll', '?find_last_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z'): 3,
+    # string::max_size() const
+    ('MSVCP60.dll', '?max_size@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIXZ'): 0,
+    # basic_filebuf::open(const char*, int)
+    ('MSVCP60.dll', '?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z'): 2,
+    # string::replace(size_t, size_t, const string&, size_t, size_t)
+    ('MSVCP60.dll', '?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIABV12@II@Z'): 5,
+    # string::resize(size_t)
+    ('MSVCP60.dll', '?resize@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEXI@Z'): 1,
+    # basic_ios::setstate(int, bool)
+    ('MSVCP60.dll', '?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z'): 2,
+    # string::substr(size_t, size_t) const [+hidden ret ptr]
+    ('MSVCP60.dll', '?substr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBE?AV12@II@Z'): 3,
+    # ~type_info()
+    ('MSVCRT.dll', '??1type_info@@UAE@XZ'): 0,
+    # type_info::operator==(const type_info&) const
+    ('MSVCRT.dll', '??8type_info@@QBEHABV0@@Z'): 1,
+}
+
 # Imports with a real body in shims_impl.c rather than a generated stub.
 HOST_SHIM = set()
 
@@ -92,6 +220,11 @@ def main():
             if argc is not None:
                 conv, src, = 'stdcall', 'hand-written'
                 hand += 1
+            else:
+                argc = HAND_THISCALL.get((dll, real))
+                if argc is not None:
+                    conv, src = 'thiscall', 'hand-written'
+                    hand += 1
         else:
             derived += 1
 
@@ -117,7 +250,9 @@ def main():
             body.append('/* %s!%s  (%s, %d slots, %s) */\n'
                         'static void %s(void) { IMPORT_STUB("%s"); RET(%d); %s; }'
                         % (dll, real, conv, argc, src, fn, real, ret, epi))
-        table.append('    { 0x%08Xu, %s, "%s!%s" },' % (va, fn, dll, real))
+        table.append('    { 0x%08Xu, %s, "%s!%s", %s },'
+                     % (va, fn, dll, real,
+                        ('"%s"' % conv) if conv else 'NULL'))
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, 'w', newline='\n') as f:

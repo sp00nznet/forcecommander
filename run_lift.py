@@ -125,15 +125,47 @@ def main():
     code = pe_data[text.raw_offset:
                    text.raw_offset + min(text.virtual_size, text.raw_size)]
 
-    lifter = Lifter(iat_map=iat)
+    # Pass the known function set. Without it the lifter emits a direct
+    # RECOMP_CALL(sub_XXXXXXXX) for every call immediate it decodes, including
+    # the nonsense ones -- padding and jump-table bytes between real functions
+    # decode as `call` with targets like 0x487C744A, far outside the image, and
+    # the generated C then fails to compile on an undeclared function. With the
+    # set, lift32 turns an unknown target into RECOMP_ICALL(imm), which reports
+    # at runtime instead of breaking the build.
+    lifter = Lifter(iat_map=iat, lifted=set(byaddr))
     os.makedirs(args.out, exist_ok=True)
     entries, chunk, idx, errors = [], [], 0, 0
     t0 = time.time()
 
+    # Clamp each function's end to the next catalogued entry.
+    #
+    # disasm32's `end` is the highest address any block reachable from the entry
+    # touches -- a reachability bound, not a contiguous extent. A function whose
+    # blocks are scattered (shared tails, jump-table arms in another part of the
+    # image) gets an `end` far past its real body: sub_00401A70 is 146
+    # instructions and 27 blocks, and reports size 1,042,608. 96 functions in
+    # this binary report over 100 KB.
+    #
+    # A *linear* lift takes that literally and decodes the whole span, which is
+    # not merely wasteful: it produced 340,404 instructions for that one
+    # function, 47.8 MB of C, and a chunk gcc could not compile in ten minutes.
+    #
+    # fury3 seeds from IDA precisely to get true bounds and calls next-entry a
+    # guess. Without IDA it is the available approximation, and it is the right
+    # one here -- it can only truncate where the catalog split a function, which
+    # score_recovery.py reports as a split, whereas trusting `end` mis-decodes
+    # megabytes of unrelated code as one body.
+    ordered = sorted(byaddr)
+    next_start = {a: (ordered[i + 1] if i + 1 < len(ordered) else ce)
+                  for i, a in enumerate(ordered)}
+
+    clamped = 0
     for addr in sorted(chosen_set):
         f = byaddr[addr]
         name = 'sub_%08X' % addr
-        end = min(f['end'], ce)
+        end = min(f['end'], next_start[addr], ce)
+        if end < min(f['end'], ce):
+            clamped += 1
         if end <= addr:
             chunk.append(('void %s(void) { }\n' % name, addr, name))
             entries.append((addr, name))
@@ -211,6 +243,7 @@ def main():
               open(os.path.join(_HERE, 'analysis', 'phase3_codegen.json'), 'w'),
               indent=1)
     print('=' * 60)
+    print('  ends clamped to the next entry: %d' % clamped)
     print('  lifted %d   not-lifted stubs %d   errors %d   files %d'
           % (len(chosen_set), len(stubs), errors, idx))
     print('  %s lines of C, %.1f MB, %.1fs'

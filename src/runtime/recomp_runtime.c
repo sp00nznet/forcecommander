@@ -20,6 +20,8 @@
 #include "imports.h"
 #include "image_loader.h"
 
+uint32_t crt_alloc(uint32_t n);   /* crt_shims.c */
+
 /* ---------------------------------------------------------------- machine */
 
 uint32_t  g_eax = 0, g_ecx = 0, g_edx = 0, g_esp = 0;
@@ -361,6 +363,51 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < g_import_count; i++)
         MEM32(g_imports[i].iat_va) = g_imports[i].iat_va;
     printf("  IAT slots self-patched:       %u\n", g_import_count);
+
+    /*
+     * Data imports are the exception, and getting them wrong is subtle.
+     * MSVCRT's `_adjust_fdiv` is an int, not a function: the CRT startup does
+     *
+     *     mov eax, [_adjust_fdiv_slot]   ; load the pointer
+     *     mov eax, [eax]                 ; read the int
+     *
+     * With the slot pointing at itself that reads back the slot's own address,
+     * which is non-zero -- and non-zero means "this CPU has the Pentium FDIV
+     * bug", which routes every floating-point divide through MSVC's software
+     * workaround. Fury3 hit the same flag from the other direction and its
+     * note is blunt about the result: NaN across all FP math. So point data
+     * slots at a zeroed cell instead.
+     */
+    uint32_t zero_cell = crt_alloc(64);
+    unsigned ndata = 0;
+    for (unsigned i = 0; i < g_import_count; i++) {
+        if (g_imports[i].conv && !strcmp(g_imports[i].conv, "data")) {
+            MEM32(g_imports[i].iat_va) = zero_cell;
+            ndata++;
+        }
+    }
+    if (ndata) printf("  data imports -> zero cell:    %u\n", ndata);
+
+    /*
+     * A simulated TIB. The very first thing the CRT entry does is
+     * `mov eax, fs:[0]` -- the head of the SEH chain -- and then writes its own
+     * frame back to it. The lifter emits fs: accesses as FS_BASE + offset, so
+     * the runtime has to point FS_BASE somewhere writable or the entry point
+     * faults on its third instruction.
+     *
+     * Only fs:[0] is touched on this path. A 4 KB block, with the SEH chain
+     * head set to the end-of-chain marker, is enough; a real TIB has stack
+     * limits at +4/+8 and the TLS array at +0x2C, which is what to fill in next
+     * if something reads them.
+     */
+    uint32_t tib = crt_alloc(0x1000);
+    memset((void*)(uintptr_t)ADDR(tib), 0, 0x1000);
+    MEM32(tib + 0x00) = 0xFFFFFFFFu;      /* SEH chain: end of chain */
+    MEM32(tib + 0x04) = FOCOM_STACK_TOP;  /* stack base */
+    MEM32(tib + 0x08) = FOCOM_STACK_BASE; /* stack limit */
+    MEM32(tib + 0x18) = tib;              /* linear address of the TIB itself */
+    g_fs_base = tib;
+    printf("  simulated TIB at 0x%08X\n", tib);
 
     if (splash) {
         /*

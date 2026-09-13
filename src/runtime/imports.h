@@ -57,6 +57,7 @@ typedef struct {
     uint32_t    iat_va;     /* the IAT slot the lifted code calls through */
     import_fn_t fn;
     const char* name;       /* "DLL!Symbol", for diagnostics */
+    const char* conv;       /* "stdcall" | "cdecl" | "thiscall" | "data" | NULL */
 } import_entry_t;
 
 extern const import_entry_t g_imports[];
