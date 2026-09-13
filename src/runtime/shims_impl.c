@@ -664,12 +664,14 @@ static void u32_GetMessageA(void) {
     HWND hw = ARG(1) ? i2h(ARG(1)) : NULL;      /* sampled before releasing */
     uint32_t lo = ARG(2), hi = ARG(3);
     BLOCKING(r = GetMessageA(&m, hw, lo, hi));
+    { static unsigned n; if (n++ < 4) fprintf(stderr, "[user32] GetMessageA #%u -> %d\n", n, r); }
     if (r > 0) msg_out(ARG(0), &m);
     RET((uint32_t)r); STDRET(4);
 }
 static void u32_PeekMessageA(void) {
     MSG m;
     BOOL r = PeekMessageA(&m, ARG(1) ? i2h(ARG(1)) : NULL, ARG(2), ARG(3), ARG(4));
+    { static unsigned n; if (n++ < 4) fprintf(stderr, "[user32] PeekMessageA #%u -> %d\n", n, r); }
     if (r) msg_out(ARG(0), &m);
     RET(r ? 1 : 0); STDRET(5);
 }
@@ -680,6 +682,7 @@ static void u32_TranslateMessage(void) {
 static void u32_DispatchMessageA(void) {
     MSG m; msg_in(ARG(0), &m);
     RET((uint32_t)(int32_t)DispatchMessageA(&m)); STDRET(1);
+    { static unsigned n; if (n++ < 4) fprintf(stderr, "[user32] DispatchMessageA #%u msg 0x%04X\n", n, m.message); }
 }
 static void u32_MsgWaitForMultipleObjects(void) {
     /* The game uses this to idle until input or a handle signals. With no real

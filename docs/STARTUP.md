@@ -72,16 +72,47 @@ without a word.
 
 ## Where it stops today
 
-`InitBase` completes and the loading panel draws, then the construction of
-`GamePPSysLibrary` (vtable 0x007C4558) receives a `GamePPProdBase*` that is not
-an object pointer -- it points at string data -- and the `call [edx+0xB8]`
-through it faults. Two other objects on the same path reach a shim with a
-`basic_string` that was never constructed.
+The startup script now runs to its last line and the process exits cleanly,
+having executed **8,944,137 lifted calls across 3,866 distinct functions** and
+opened its own content: `project.gam`, the `Focom Translation` text files, and
+**`forcecommand.rpk` with 288,585 reads** -- the 274 MB archive, in exactly the
+directory format `tools/rpk.py` decodes.
 
-The one structural difference from a real run is that `CreateThread` does not
-run the thread: the machine state is a single set of globals, so a host thread
-executing lifted code would race the main one on every register, and running the
-routine synchronously does not terminate because what `InitBase` creates is a
-service loop. Whether that thread is what registers the system libraries is the
-next thing to establish; if it is, the machine state has to become thread-local
-before this moves.
+It renders nothing, and the reason is specific. `Run 2 1 6` is
+`GamePPProdStartup` vtable slot 19 (`sub_005026D0`), which does only this:
+
+    ecx = [this + 0x14]          ; the GamePPProdBase
+    if (!ecx) return
+    call [ecx_vtbl + 0xF4](2, 1, 6)   ; GamePPProdBase slot 61, sub_0051CE70
+
+and `sub_0051CE70` ends:
+
+    ecx = [this + 0x94]
+    if (!ecx) goto epilogue      ; <-- taken
+    ...
+    call [ecx_vtbl + 0x38](this, &state)   ; the main loop
+
+`GamePPProdBase + 0x94` is the **GamePPVisObjectTemplateManager**, and it is
+null by the time Run asks for it. The sequence, from a `--poison` on that slot
+against the call trace:
+
+| trace index | what |
+|---|---|
+| 20,097 | `sub_0052B910` (GamePPVisObjectTemplateManager) creates it; `+0x94 = 0x1014E140` |
+| 115,999 | `GamePPProdBase` slot 186 (`sub_0051DE00`) releases it and nulls `+0x94` |
+| 4,692,711 | `Run` finds it null and returns |
+| 8,635,133 | `sub_00519C50`, the real teardown, runs at the end |
+
+The nulling at 115,999 is not a bug: slot 186 is called deliberately from
+`GamePPProdStartup` slot 12 (`sub_00501DB0`, at 0x00501ED9) after two virtual
+checks pass, as a reset before loading a program -- the code that follows it
+goes on to `sub_00520370` and `sub_0053DCB0`. So the question is not why it is
+cleared but **what should re-create it on the load-program path, and why that
+does not happen.** That is the next thread, and it is game logic rather than
+shim fidelity.
+
+Two things are known not to be the cause: `<Bad Template>` (0x0083EEA8, in
+`sub_0051D530`) never executes, and the game never calls `GetMessage`,
+`PeekMessage` or `DispatchMessage` at all -- so it is not losing a message
+loop, it never starts one, because Run returns before reaching it.
+
