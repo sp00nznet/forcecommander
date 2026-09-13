@@ -74,6 +74,18 @@ static uint32_t g_nullstr;               /* the shared empty buffer */
 
 static char* host(uint32_t va) { return (char*)(uintptr_t)ADDR(va); }
 
+/* --stlwatch ADDR: every initialisation and teardown of one string object.
+ * Reading the shim table says which constructors exist; only a run says whether
+ * the one the game used was ever called on the object that went bad. */
+uint32_t g_stlwatch = 0;
+static void stlw(const char* what, uint32_t o, uint32_t n) {
+    if (g_stlwatch && o == g_stlwatch)
+        fprintf(stderr, "[stlw] %-8s 0x%08X n=%u _Ptr=0x%08X _Len=%u"
+                        " from 0x%08X\n",
+                what, o, n, MEM32(o + 4), MEM32(o + 8), g_cur_func);
+}
+
+
 /* A usable destination. _Ptr == 0 is fine -- the game zero-fills string members
  * and s_reserve() allocates on first write -- but a small NON-zero _Ptr, or a
  * length no allocation could have, means this object was never a string: either
@@ -145,6 +157,7 @@ static uint32_t buf_new(uint32_t cap) {
 }
 
 static void s_set(uint32_t o, const char* src, uint32_t n, uint32_t cap) {
+    stlw("set", o, n);
     if (cap < n) cap = n;
     uint32_t data = buf_new(cap);
     if (!data) { S_PTR(o) = g_nullstr; S_LEN(o) = 0; S_RES(o) = 0; return; }
@@ -157,6 +170,7 @@ static void s_set(uint32_t o, const char* src, uint32_t n, uint32_t cap) {
 
 /* Make room for `need` characters, preserving the current contents. */
 static void s_reserve(uint32_t o, uint32_t need) {
+    stlw("reserve", o, need);
     /* The single path every growing write takes, so the check belongs here
      * rather than in each of the twenty-odd callers. */
     if (s_bad(o)) {
@@ -178,6 +192,7 @@ static void s_reserve(uint32_t o, uint32_t need) {
 }
 
 static void s_empty(uint32_t o) {
+    stlw("empty", o, 0);
     S_PTR(o) = g_nullstr;
     S_LEN(o) = 0;
     S_RES(o) = 0;
@@ -193,6 +208,7 @@ static int s_dst_ok(uint32_t o, const char* who) {
 }
 
 static void s_assign(uint32_t o, const char* src, uint32_t n) {
+    stlw("assign", o, n);
     if (!s_dst_ok(o, "assign")) return;
     if (!n) { s_empty(o); return; }
     s_reserve(o, n);

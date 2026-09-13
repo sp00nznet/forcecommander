@@ -55,6 +55,8 @@ extern int g_shim_trace;
 uint32_t g_poison = 0;
 int g_poison_hit = 0;
 uint32_t g_poison_last = 0;
+uint32_t g_poison_val = 0;
+extern uint32_t g_stlwatch;
 extern const char* g_cur_import;
 uint32_t g_watch[8];
 unsigned g_watch_n = 0;
@@ -67,7 +69,8 @@ void recomp_trace_enter(uint32_t va) {
      * g_cur_import names which shim did it. */
     if (g_poison) {
         uint32_t v = MEM32(g_poison);
-        if (v != g_poison_last && g_poison_hit < 16) {
+        if (v != g_poison_last && g_poison_hit < 400
+            && (!g_poison_val || v == g_poison_val)) {
             g_poison_hit++;
             fprintf(stderr, "[poison] 0x%08X: 0x%08X -> 0x%08X on entry to"
                             " 0x%08X (last import %s)\n",
@@ -77,8 +80,11 @@ void recomp_trace_enter(uint32_t va) {
     }
     for (unsigned w = 0; w < g_watch_n; w++) {
         if (g_watch[w] != va) continue;
-        fprintf(stderr, "[watch] 0x%08X ecx=%08X eax=%08X esi=%08X edi=%08X esp=%08X\n",
-                va, g_ecx, g_eax, g_esi, g_edi, g_esp);
+        fprintf(stderr, "[watch] 0x%08X ecx=%08X ebx=%08X eax=%08X esi=%08X"
+                        " edi=%08X esp=%08X args:", va, g_ecx, g_ebx, g_eax,
+                g_esi, g_edi, g_esp);
+        for (int k = 4; k <= 0x20; k += 4) fprintf(stderr, " %08X", MEM32(g_esp + k));
+        fprintf(stderr, "\n");
         if (g_ecx >= 0x00200000u) {
             fprintf(stderr, "[watch]   [ecx+00..20]:");
             for (int k = 0; k <= 0x20; k += 4)
@@ -467,6 +473,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--poison") && i + 1 < argc)
             g_poison = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--stlwatch") && i + 1 < argc)
+            g_stlwatch = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--poisonval") && i + 1 < argc)
+            g_poison_val = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--watch") && i + 1 < argc && g_watch_n < 8)
             g_watch[g_watch_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--calltrace") && i + 1 < argc)
