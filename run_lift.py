@@ -36,6 +36,7 @@ sys.path.insert(0, _LIFT)
 sys.path.insert(0, os.path.join(_HERE, '..', 'tools', 'tools', 'pe'))
 
 from capstone import Cs, CS_ARCH_X86, CS_MODE_32          # noqa: E402
+from capstone.x86 import X86_OP_IMM                        # noqa: E402
 from generate import (linear_disassemble_function,         # noqa: E402
                       lift_function_linear, write_chunk)
 from lift32 import Lifter                                  # noqa: E402
@@ -54,6 +55,59 @@ HOST_SHIM = {
     # of frame", so the shim in shims_impl.c does exactly that.
     0x0056EB30,
 }
+
+
+_COND = {'je','jne','jz','jnz','ja','jae','jb','jbe','jg','jge','jl','jle',
+         'js','jns','jo','jno','jp','jnp','jcxz','jecxz','loop','loope','loopne'}
+
+
+def true_extent(md, code, cs, ce, start, hard_end, entries):
+    """Exact end of the contiguous body at `start`, by recursive descent.
+
+    The catalog gives an entry and a reachability bound, and neither is an
+    extent. Guessing one from the next entry cuts functions in half at false
+    starts; trusting `end` decodes megabytes of unrelated code as one body. Both
+    were tried and both broke, in opposite directions.
+
+    Walking the branches settles it: follow fallthrough and every direct
+    conditional or unconditional jump, stop at ret/int3 and at any jump leaving
+    the window, and the answer is the highest address actually reached. Data
+    past the real end is never entered, so it never widens the result.
+
+    `entries` is what keeps a tail call from swallowing its target. `jmp f` where
+    f is another catalogued function is a call that will not return, not an
+    intra-function branch, and following it walks straight into the next
+    function -- which is how the first version of this produced 839 MB of C with
+    9,054 bodies "spanning a false entry".
+    """
+    seen, work, top = set(), [start], start
+    while work:
+        va = work.pop()
+        if va in seen or not (start <= va < hard_end):
+            continue
+        off = va - cs
+        for ins in md.disasm(code[off:off + 512], va):
+            if ins.address in seen:
+                break
+            seen.add(ins.address)
+            top = max(top, ins.address + ins.size)
+            m = ins.mnemonic
+            t = None
+            if ins.operands and ins.operands[0].type == X86_OP_IMM:
+                t = ins.operands[0].imm & 0xFFFFFFFF
+            if m in ('ret', 'retn', 'retf', 'iret', 'int3', 'hlt'):
+                break
+            if m == 'jmp':
+                if (t is not None and start < t < hard_end
+                        and t not in entries):
+                    work.append(t)          # intra-function
+                break                       # unconditional: no fallthrough
+            if (m in _COND and t is not None and start < t < hard_end
+                    and t not in entries):
+                work.append(t)
+            if ins.address + ins.size >= hard_end:
+                break
+    return top
 
 
 def closure(funcs, roots, limit):
@@ -160,25 +214,23 @@ def main():
     entries, chunk, idx, errors = [], [], 0, 0
     t0 = time.time()
 
-    # Clamp each function's end to the next catalogued entry.
+    # Function extents come from walking the branches, not from the catalog.
     #
-    # disasm32's `end` is the highest address any block reachable from the entry
-    # touches -- a reachability bound, not a contiguous extent. A function whose
-    # blocks are scattered (shared tails, jump-table arms in another part of the
-    # image) gets an `end` far past its real body: sub_00401A70 is 146
-    # instructions and 27 blocks, and reports size 1,042,608. 96 functions in
-    # this binary report over 100 KB.
+    # disasm32 gives an entry and a *reachability* bound, and neither is an
+    # extent. Both cheap substitutes were tried and both broke, in opposite
+    # directions: trusting `end` decoded 1 MB of unrelated code as one body
+    # (sub_00401A70 is 146 instructions and reports size 1,042,608), and
+    # clamping to the next entry cut functions in half at false starts
+    # (sub_00401AB0's `jne 0x401B13` jumps over an invented entry at 0x401B00,
+    # and the arm ran with ebp = 0x0000000F).
     #
-    # A *linear* lift takes that literally and decodes the whole span, which is
-    # not merely wasteful: it produced 340,404 instructions for that one
-    # function, 47.8 MB of C, and a chunk gcc could not compile in ten minutes.
-    #
-    # fury3 seeds from IDA precisely to get true bounds and calls next-entry a
-    # guess. Without IDA it is the available approximation, and it is the right
-    # one here -- it can only truncate where the catalog split a function, which
-    # score_recovery.py reports as a split, whereas trusting `end` mis-decodes
-    # megabytes of unrelated code as one body.
+    # true_extent() settles it by following fallthrough and every direct branch
+    # from the entry, stopping at ret/int3 and at any jump that leaves the
+    # window. Data past the real end is never entered, so it never widens the
+    # answer, and a split cannot truncate one because the branch over it is
+    # followed.
     ordered = sorted(byaddr)
+    entry_set = set(ordered)
     next_start = {a: (ordered[i + 1] if i + 1 < len(ordered) else ce)
                   for i, a in enumerate(ordered)}
 
@@ -186,9 +238,12 @@ def main():
     for addr in sorted(chosen_set):
         f = byaddr[addr]
         name = 'sub_%08X' % addr
-        end = min(f['end'], next_start[addr], ce)
-        if end < min(f['end'], ce):
+        hard = min(f['end'], ce)
+        end = true_extent(md, code, cs, ce, addr, hard, entry_set)
+        if end < hard:
             clamped += 1
+        if end > next_start[addr]:
+            extended += 1      # the body legitimately spans a false entry
         if end <= addr:
             chunk.append(('void %s(void) { }\n' % name, addr, name))
             entries.append((addr, name))
@@ -215,24 +270,6 @@ def main():
             # made it dispatchable and no better -- a branch target is not a
             # function, and calling it as one is still the wrong frame.
             #
-            # One pass, and capped hard at 2 KB past the clamp.
-            #
-            # Iterating and taking max(target) over the whole body looked more
-            # thorough and was worse: a branch target decoded out of *data* past
-            # the real function end drags `end` after it, the next pass decodes
-            # more data as code, and it compounds. That version reached the
-            # static constructors and faulted inside one, having previously got
-            # all the way through 358 of them.
-            #
-            # A split that a `jcc` jumps over is small -- sub_00401AB0's is 0x13
-            # bytes -- so covering the nearest dangling target and stopping is
-            # both sufficient and self-limiting.
-            targets = [t for t in (i.get_branch_target() for i in insns)
-                       if t is not None and end <= t < min(f['end'], ce, end + 0x800)]
-            if targets:
-                end = min(min(targets) + 16, addr + 0x800, ce)
-                insns, leaders = linear_disassemble_function(md, code, cs, addr, end)
-                extended += 1
             if not insns:
                 chunk.append(('void %s(void) { }\n' % name, addr, name))
             else:
@@ -299,8 +336,8 @@ def main():
               open(os.path.join(_HERE, 'analysis', 'phase3_codegen.json'), 'w'),
               indent=1)
     print('=' * 60)
-    print('  ends clamped to the next entry: %d  (extended for a '
-          'computed jump: %d)' % (clamped, extended))
+    print('  extents shorter than the catalog bound: %d  '
+          '(bodies spanning a false entry: %d)' % (clamped, extended))
     print('  lifted %d   not-lifted stubs %d   errors %d   files %d'
           % (len(chosen_set), len(stubs), errors, idx))
     print('  %s lines of C, %.1f MB, %.1fs'

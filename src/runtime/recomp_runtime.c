@@ -298,9 +298,34 @@ void host_screenshot(const char* path) {
 /* ---------------------------------------------------------------- crash */
 
 static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
+    EXCEPTION_RECORD* r = ep->ExceptionRecord;
     fprintf(stderr, "\n=== fault 0x%08lX at host rip %p ===\n",
-            ep->ExceptionRecord->ExceptionCode,
-            ep->ExceptionRecord->ExceptionAddress);
+            r->ExceptionCode, r->ExceptionAddress);
+
+    /*
+     * For an access violation ExceptionInformation[0] is read/write/execute and
+     * [1] is the address touched. Without it every one of these looks the same
+     * and the only way forward is guessing; with it the address usually says
+     * which pointer was wrong, and whether it was in the image, the heap, the
+     * stack, or nowhere.
+     */
+    if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        r->NumberParameters >= 2) {
+        uintptr_t at = r->ExceptionInformation[1];
+        static const char* what[] = {"read", "write", "execute"};
+        ULONG_PTR op = r->ExceptionInformation[0];
+        const char* where = "outside every known region";
+        if (at >= FOCOM_IMAGE_BASE && at < FOCOM_IMAGE_BASE + 0x00800000u)
+            where = "inside the mapped image";
+        else if (at >= FOCOM_STACK_BASE && at < FOCOM_STACK_TOP)
+            where = "inside the simulated stack";
+        else if (at >= FOCOM_HEAP_BASE && at < FOCOM_HEAP_BASE + FOCOM_HEAP_SIZE)
+            where = "inside the simulated heap";
+        else if (at < 0x10000)
+            where = "a null/low pointer";
+        fprintf(stderr, "  %s of 0x%016llX -- %s\n",
+                op < 3 ? what[op] : "?", (unsigned long long)at, where);
+    }
     fprintf(stderr, "current lifted function: 0x%08X\n", g_cur_func);
     fprintf(stderr, "eax=%08X ecx=%08X edx=%08X ebx=%08X\n", g_eax, g_ecx, g_edx, g_ebx);
     fprintf(stderr, "esp=%08X ebp=%08X esi=%08X edi=%08X\n", g_esp, g_ebp, g_esi, g_edi);
@@ -309,6 +334,7 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
         uint32_t idx = (g_icall_trace_idx - i) & (ICALL_TRACE_SIZE - 1);
         if (g_icall_trace[idx]) fprintf(stderr, "  0x%08X\n", g_icall_trace[idx]);
     }
+    recomp_dump_trace("fault");
     fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }

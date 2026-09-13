@@ -363,6 +363,109 @@ static void k32_GetCurrentDirectoryA(void) {
     RET((uint32_t)strlen(g_gamedir)); STDRET(2);
 }
 
+
+/* ------------------------------------------- Win32 startup, for real
+
+ * These were stubs returning 0, and a stub that is supposed to FILL IN a
+ * caller-provided struct is not a benign stub: the caller reads whatever was
+ * on the stack. The CRT startup reads STARTUPINFO.lpReserved2/cbReserved2 to
+ * pick up inherited file handles, so garbage there corrupts it -- which is how
+ * the entry point ended up running its epilogue with ebp = 0x00400000, a module
+ * handle where a frame pointer belonged.
+ */
+static void k32_GetStartupInfoA(void) {
+    uint32_t p = ARG(0);
+    if (p) {
+        for (uint32_t i = 0; i < 68; i += 4) MEM32(p + i) = 0;
+        MEM32(p + 0) = 68;          /* cb */
+        MEM16(p + 0x2C) = 0;        /* wShowWindow */
+    }
+    RET(0); STDRET(1);
+}
+
+static void k32_GetVersionExA(void) {
+    /* Windows 2000: what a 2000-era game expects, and new enough that no
+     * 9x-only path is taken. */
+    uint32_t p = ARG(0);
+    if (p) {
+        MEM32(p + 0x00) = 148;      /* dwOSVersionInfoSize */
+        MEM32(p + 0x04) = 5;        /* dwMajorVersion */
+        MEM32(p + 0x08) = 0;        /* dwMinorVersion */
+        MEM32(p + 0x0C) = 2195;     /* dwBuildNumber */
+        MEM32(p + 0x10) = 2;        /* VER_PLATFORM_WIN32_NT */
+        for (uint32_t i = 0x14; i < 0x94; i += 4) MEM32(p + i) = 0;
+    }
+    RET(1); STDRET(1);
+}
+
+static void k32_QueryPerformanceFrequency(void) {
+    uint32_t p = ARG(0);
+    if (p) { MEM32(p) = 1000000u; MEM32(p + 4) = 0; }   /* 1 MHz */
+    RET(1); STDRET(1);
+}
+
+static void k32_QueryPerformanceCounter(void) {
+    uint32_t p = ARG(0);
+    if (p) {
+        /* Monotonic microseconds, from the host's own performance counter so
+         * the game's frame timing is real rather than a fabricated ramp. */
+        LARGE_INTEGER c, f;
+        QueryPerformanceCounter(&c);
+        QueryPerformanceFrequency(&f);
+        unsigned long long us = (unsigned long long)
+            ((double)c.QuadPart / (double)f.QuadPart * 1000000.0);
+        MEM32(p) = (uint32_t)us;
+        MEM32(p + 4) = (uint32_t)(us >> 32);
+    }
+    RET(1); STDRET(1);
+}
+
+static void mm_timeGetTime(void)  { RET((uint32_t)GetTickCount()); STDRET(0); }
+static void ole_CoInitialize(void) { RET(0); STDRET(1); }   /* S_OK */
+
+/* Critical sections: the game is single-threaded through startup, and a real
+ * one cannot be used because the game's CRITICAL_SECTION lives in ITS address
+ * space at a size the host's does not match. */
+static void k32_cs_init(void)  { RET(0); STDRET(1); }
+static void k32_cs_enter(void) { RET(0); STDRET(1); }
+static void k32_cs_leave(void) { RET(0); STDRET(1); }
+static void k32_cs_del(void)   { RET(0); STDRET(1); }
+
+
+/* ------------------------------------------ LoadLibrary / GetProcAddress
+
+ * The graphics stack is not in the import table: DDRAW.DLL, SMUSH.DLL,
+ * FEELIT.DLL and DINPUT.DLL all arrive through LoadLibrary, and the entry
+ * points through GetProcAddress. So this pair is the interception point for the
+ * whole renderer, and what it answers decides which path the game takes.
+ *
+ * Returning 1 from both -- which is what the generated "did it work" stub did --
+ * is the worst answer: the game believes it has a module and a function
+ * pointer, calls through 1, and faults. Returning a real handle but a NULL
+ * proc is the honest one: the game's own "this DLL is present but does not
+ * export what I need" path runs, and RE3D has three renderers to fall back
+ * through (Direct3D hardware, Direct3D RGB, DirectDraw memory-lock).
+ */
+#define FAKE_MODULE_BASE 0x7F000000u
+static uint32_t g_fake_mod = FAKE_MODULE_BASE;
+
+static void k32_LoadLibraryA(void) {
+    const char* n = ARG(0) ? (const char*)(uintptr_t)ADDR(ARG(0)) : "(null)";
+    g_fake_mod += 0x10000;
+    fprintf(stderr, "[dll] LoadLibraryA(\"%s\") -> 0x%08X (stub module)\n",
+            n, g_fake_mod);
+    RET(g_fake_mod); STDRET(1);
+}
+
+static void k32_GetProcAddress(void) {
+    const char* n = ARG(1) ? (const char*)(uintptr_t)ADDR(ARG(1)) : "(ordinal)";
+    fprintf(stderr, "[dll] GetProcAddress(0x%08X, \"%s\") -> NULL"
+                    "  (not implemented yet)\n", ARG(0), n);
+    RET(0); STDRET(2);
+}
+
+static void k32_FreeLibrary(void) { RET(1); STDRET(1); }
+
 /* -------------------------------------------------------------- registry */
 
 const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
@@ -434,5 +537,18 @@ const struct { const char* name; import_fn_t fn; } g_crt_shims[] = {
     { "KERNEL32.dll!GetTickCount",         k32_GetTickCount },
     { "KERNEL32.dll!GetLastError",         k32_GetLastError },
     { "KERNEL32.dll!Sleep",                k32_Sleep },
+    { "KERNEL32.dll!LoadLibraryA",         k32_LoadLibraryA },
+    { "KERNEL32.dll!GetProcAddress",       k32_GetProcAddress },
+    { "KERNEL32.dll!FreeLibrary",          k32_FreeLibrary },
+    { "KERNEL32.dll!GetStartupInfoA",      k32_GetStartupInfoA },
+    { "KERNEL32.dll!GetVersionExA",        k32_GetVersionExA },
+    { "KERNEL32.dll!QueryPerformanceFrequency", k32_QueryPerformanceFrequency },
+    { "KERNEL32.dll!QueryPerformanceCounter",   k32_QueryPerformanceCounter },
+    { "KERNEL32.dll!InitializeCriticalSection", k32_cs_init },
+    { "KERNEL32.dll!EnterCriticalSection",      k32_cs_enter },
+    { "KERNEL32.dll!LeaveCriticalSection",      k32_cs_leave },
+    { "KERNEL32.dll!DeleteCriticalSection",     k32_cs_del },
+    { "WINMM.dll!timeGetTime",             mm_timeGetTime },
+    { "ole32.dll!CoInitialize",            ole_CoInitialize },
 };
 const unsigned g_crt_shim_count = sizeof(g_crt_shims) / sizeof(g_crt_shims[0]);

@@ -12,10 +12,27 @@
  * object's fields directly. Only the expensive operations became imports. So
  * the object must be:
  *
- *     +0x00  char*  _Ptr     always NUL-terminated, never NULL
- *     +0x04  size_t _Len     length in characters
- *     +0x08  size_t _Res     capacity
- *                            sizeof == 12 (allocator<char> is empty)
+ *     +0x00  allocator<char>  empty class, but still occupies a padded slot
+ *     +0x04  char*  _Ptr     always NUL-terminated, never NULL
+ *     +0x08  size_t _Len     length in characters
+ *     +0x0C  size_t _Res     capacity
+ *                            sizeof == 16
+ *
+ * The allocator slot is the trap, and getting it wrong cost a debugging session.
+ * MSVC 6 declares `_A allocator` as the FIRST member, and an empty class member
+ * still takes a byte, padded to four -- so every field sits one slot later than
+ * a reading of the standard library would suggest. The game's own copy
+ * constructor says so plainly at 0x00401AD0:
+ *
+ *     mov  al, byte ptr [esi]          ; read the source's allocator byte
+ *     mov  byte ptr [ebx], al          ; allocator -> this+0
+ *     mov  dword ptr [ebx + 4], edi    ; _Ptr      -> this+4
+ *     mov  dword ptr [ebx + 8], edi    ; _Len      -> this+8
+ *     mov  dword ptr [ebx + 0xc], edi  ; _Res      -> this+12
+ *
+ * With the fields one slot early, _Grow returned having set what the caller
+ * read as _Len, so 0x004EE923's `mov edi, [esp+0x14]` loaded 0 and the
+ * following `rep movsd` wrote a string literal to address 0.
  *
  * and the buffer carries a reference count in the byte *before* the data --
  * which is not a guess: the import list contains
@@ -49,18 +66,24 @@ uint32_t crt_alloc(uint32_t n);          /* crt_shims.c */
 
 /* ---------------------------------------------------------------- object */
 
-#define S_PTR(o)  MEM32((o) + 0)
-#define S_LEN(o)  MEM32((o) + 4)
-#define S_RES(o)  MEM32((o) + 8)
+#define S_PTR(o)  MEM32((o) + 4)
+#define S_LEN(o)  MEM32((o) + 8)
+#define S_RES(o)  MEM32((o) + 12)
 
 static uint32_t g_nullstr;               /* the shared empty buffer */
 
 static char* host(uint32_t va) { return (char*)(uintptr_t)ADDR(va); }
 
 /* Allocate a buffer for `cap` characters: one refcount byte, the data, a NUL. */
+static int g_trace_stl = 0;
+
 static uint32_t buf_new(uint32_t cap) {
     uint32_t p = crt_alloc(cap + 2);
-    if (!p) return 0;
+    if (!p) {
+        fprintf(stderr, "[stl] buf_new(%u) FAILED -- heap exhausted,"
+                        " from 0x%08X\n", cap, g_cur_func);
+        abort();
+    }
     MEM8(p) = 0;                          /* refcount, at data[-1] */
     uint32_t data = p + 1;
     MEM8(data) = 0;
@@ -354,6 +377,11 @@ static void s_Eos(void) {
 static void s_Copy(void)   { s_reserve(THIS, ARG(0)); RET(THIS); STDRET(1); }
 static void s_Grow(void) {
     uint32_t n = ARG(0);
+    if (g_trace_stl)
+        fprintf(stderr, "[stl] _Grow(this=0x%08X, n=%u, trim=%u) before:"
+                        " _Ptr=0x%08X _Len=%u _Res=%u from 0x%08X\n",
+                THIS, n, ARG(1), S_PTR(THIS), S_LEN(THIS), S_RES(THIS),
+                g_cur_func);
     if (!n) { s_empty(THIS); RET(0); STDRET(2); return; }
     s_reserve(THIS, n);
     RET(1); STDRET(2);
@@ -410,6 +438,8 @@ static void f_add_s_ch(void) {
     RET(o); CDECLRET();
 }
 
+static void f_ostream_put(void) { RET(ARG(0)); CDECLRET(); }
+
 /* char_traits<char> statics */
 static void ct_length(void) { RET((uint32_t)strlen(host(ARG(0)))); CDECLRET(); }
 static void ct_copy(void)   { memcpy(host(ARG(0)), host(ARG(1)), ARG(2)); RET(ARG(0)); CDECLRET(); }
@@ -441,6 +471,12 @@ static void nop2(void) { RET(THIS); STDRET(2); }
 #define SBUF "?$basic_streambuf@DU?$char_traits@D@std@@@std@@"
 #define FSTR "?$basic_fstream@DU?$char_traits@D@std@@@std@@"
 #define IOST "?$basic_iostream@DU?$char_traits@D@std@@@std@@"
+/* In a FREE function the enclosing std:: is a backref, so basic_string ends
+ * at `@2@` and is followed by `@0@` -- not the `@2@@std@@` spelling a member
+ * uses. Same type, different encoding, and the table silently missed all 13
+ * operators until the names were diffed against the import list. */
+#define STRF "?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@"
+#define OSTR "?$basic_ostream@DU?$char_traits@D@std@@"
 #define P "MSVCP60.dll!"
 
 const struct { const char* name; import_fn_t fn; } g_stl_shims[] = {
@@ -478,18 +514,22 @@ const struct { const char* name; import_fn_t fn; } g_stl_shims[] = {
     { P "?_Copy@" STR "AAEXI@Z",                    s_Copy },
     { P "?_Grow@" STR "AAE_NI_N@Z",                 s_Grow },
 
-    { P "??8std@@YA_NABV" STR "@0@0@Z",             f_eq_ss },
-    { P "??8std@@YA_NABV" STR "@0@PBD@Z",           f_eq_sc },
-    { P "??8std@@YA_NPBDABV" STR "@0@@Z",           f_eq_cs },
-    { P "??9std@@YA_NABV" STR "@0@0@Z",             f_ne_ss },
-    { P "??9std@@YA_NABV" STR "@0@PBD@Z",           f_ne_sc },
-    { P "??Mstd@@YA_NABV" STR "@0@0@Z",             f_lt_ss },
-    { P "??Ostd@@YA_NABV" STR "@0@0@Z",             f_gt_ss },
-    { P "??Hstd@@YA?AV" STR "@0@ABV10@0@Z",         f_add_ss },
-    { P "??Hstd@@YA?AV" STR "@0@ABV10@PBD@Z",       f_add_sc },
-    { P "??Hstd@@YA?AV" STR "@0@PBDABV10@@Z",       f_add_cs },
-    { P "??Hstd@@YA?AV" STR "@0@ABV10@D@Z",         f_add_s_ch },
+    { P "??8std@@YA_NABV" STRF "@0@0@Z",            f_eq_ss },
+    { P "??8std@@YA_NABV" STRF "@0@PBD@Z",          f_eq_sc },
+    { P "??8std@@YA_NPBDABV" STRF "@0@@Z",          f_eq_cs },
+    { P "??9std@@YA_NABV" STRF "@0@0@Z",            f_ne_ss },
+    { P "??9std@@YA_NABV" STRF "@0@PBD@Z",          f_ne_sc },
+    { P "??Mstd@@YA_NABV" STRF "@0@0@Z",            f_lt_ss },
+    { P "??Ostd@@YA_NABV" STRF "@0@0@Z",            f_gt_ss },
+    { P "??Hstd@@YA?AV" STRF "@0@ABV10@0@Z",        f_add_ss },
+    { P "??Hstd@@YA?AV" STRF "@0@ABV10@PBD@Z",      f_add_sc },
+    { P "??Hstd@@YA?AV" STRF "@0@PBDABV10@@Z",      f_add_cs },
+    { P "??Hstd@@YA?AV" STRF "@0@ABV10@D@Z",        f_add_s_ch },
 
+    /* operator<<(ostream&, ...) -- iostream is not implemented; return the
+     * stream so a chained << does not fault, and drop the output. */
+    { P "??6std@@YAAAV" OSTR "@0@AAV10@ABV" STRF "@0@@Z", f_ostream_put },
+    { P "??6std@@YAAAV" OSTR "@0@AAV10@PBD@Z",      f_ostream_put },
     { P "?length@?$char_traits@D@std@@SAIPBD@Z",    ct_length },
     { P "?copy@?$char_traits@D@std@@SAPADPADPBDI@Z", ct_copy },
     { P "?assign@?$char_traits@D@std@@SAXAADABD@Z", ct_assign },
@@ -530,6 +570,7 @@ const unsigned g_stl_shim_count = sizeof(g_stl_shims) / sizeof(g_stl_shims[0]);
  * esi at the fault that stopped the previous run.
  */
 void stl_init_data_imports(void) {
+    g_trace_stl = getenv("FOCOM_TRACE_STL") != NULL;
     uint32_t npos = crt_alloc(4);
     MEM32(npos) = NPOS;
 
