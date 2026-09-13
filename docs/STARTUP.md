@@ -72,128 +72,135 @@ without a word.
 
 ## Where it stops today
 
-The game boots, loads, starts its first section, runs that section for 61
-frames, and then exits cleanly. Nothing is drawn, and nothing goes wrong: no
-assertion fires and no error is reported anywhere in the run. The section
-finishes.
-
-### The chain, measured
-
 `Run 2 1 6` is `GamePPProdStartup` slot 19, forwarding to `GamePPProdBase`
-slot 61 (`sub_0051CE70`), which calls slot 14 on the object at
-`GamePPProdBase + 0x94` -- the **GamePPVisProcessManager** (vtable
-0x007C58B4). Slot 14 is `sub_0052B410`, "start a process".
+slot 61 (`sub_0051CE70`), which calls slot 14 on the **GamePPVisProcessManager**
+at `GamePPProdBase + 0x94` (vtable 0x007C58B4). The three numbers are an
+object-template id: `Trasse - Day/info.pro`, whose `inheritID` is `2 1 12` =
+`Endor - Dawn`, the template every mission inherits its code from.
 
-The three numbers are an object-template id: `.pro` files key `id` and
-`inheritID` as triples, and `2 1 6` is `Trasse - Day/info.pro`, whose
-`bootThread` is 102 and whose `inheritID` is `2 1 12` = `Endor - Dawn` -- the
-template every mission inherits from, and the one that actually carries the
-code. So the last live line of Focom.ini means "boot the Trasse section", and
-it works: the lookup finds the template, allocates, and registers a process in
-slot 0 of the manager's 16-slot array.
+The process is started with a **boot thread**, and a boot process lives exactly
+as long as its boot thread: `sub_005263D0` removes it the moment
+`[thread+0xC]`, the OS handle, goes to zero, and a Ronin thread body runs
+exactly once. The boot thread's body is `CProcessThread::Tick`
+(`sub_00524A80`) -- `GetTickCount()`, a delta, and `process->Update(dt)`. So
+the game's whole first section is that loop, and its length is the answer to
+"how far does this get".
 
-The process is started with a **boot thread** (`sub_00523980` stores that
-choice at `[proc+0x1B4]` and the Ronin `CThread` at `[proc+0x1B0]`), and a
-Ronin thread is one-shot: `sub_005510F0` calls the body once, stores the
-result, signals the completion event, and sets `[thr+0xC] = 0`. The process's
-own per-frame check, `sub_005263D0`, is then:
+### The HAL device was not optional
+
+For a long time the section ran **61 frames with no renderer at all** and then
+finished, cleanly, with no error reported anywhere. The reason was one number.
+
+`sub_007321C0` is the gate that decides whether a `CDD7Device` can have a
+screen. It reads `dwDeviceRenderBitDepth` at a **hardcoded** offset,
+`device + 0x454`. CDD7Device keeps all four enumerated `D3DDEVICEDESC7`s
+inline, filed by GUID by the callback at `sub_0076ACC0`:
+
+| slot | GUID at | description at | `dwDeviceRenderBitDepth` |
+|---|---|---|---|
+| TnLHal | 0x007CE6B0 | device+0x2D4 | device+0x348 |
+| **HAL** | 0x007CE670 | device+0x3E0 | **device+0x454** |
+| RGB | 0x007CE660 | device+0x4EC | device+0x560 |
+| Ref | 0x007CE690 | device+0x5F8 | device+0x66C |
+
+The shim offered only the RGB software device, so the HAL slot stayed zeroed,
+`test ah,4` for `DDBD_16` failed, and everything after it in the constructor
+was skipped -- the `CDD7WinScreen`, the screen registration, the renderer
+selection. The RGB description was sitting correctly in slot 3 at
+`device+0x560` (0x700 = DDBD_16|24|32) the whole time, which is how the
+offsets were confirmed rather than guessed.
+
+The comment in `ddraw_shims.c` had predicted this: *"offer the HAL device too
+if the game turns out to insist on one."* It insists.
+
+### Four more infidelities behind it
+
+Each was found by the next fault, and each is the same kind of thing --
+a hand-written Windows reimplementation that was not quite the real one.
+
+- **`SetDisplayMode` takes five arguments on IDirectDraw7**, not the three
+  IDirectDraw v1 took, and the shim purged for three. Eight bytes of refresh
+  rate and flags stayed on the target stack; the caller popped its saved
+  registers off the wrong slots and `CUtilityDevice::SelectRenderer` came back
+  from creating the screen with `this == 0`. An audit of all 30 IDirectDraw7
+  slots against the header signatures found `StartModeTest` and `EvaluateMode`
+  wrong the same way.
+- **`GetSurfaceDesc` and `Lock` filled in a v1 `DDSURFACEDESC`** -- `dwSize`
+  108 where the DX7 interfaces want 124, and the `DDSCAPS2` tail left holding
+  whatever the caller had there.
+- **`GetDDInterface` was a stub** that returned DD_OK and left its out pointer
+  alone. RE3D calls straight through the result.
+- **`GetAttachedSurface` returned the surface ITSELF** when nothing was
+  attached, on the theory that non-NULL was the safer answer. It is the
+  opposite: the DX7 texture manager walks a mipmap chain until
+  GetAttachedSurface *refuses*, so that made the walk run forever -- 280,000
+  iterations, each appending to two vectors, until the whole gigabyte of target
+  heap was gone and the failure surfaced as a null-pointer `memset` inside
+  msvcrt.dll with nothing to connect it to the cause.
+
+### A real allocator, and a lifter bug
+
+The target heap was a bump allocator that never reused anything, with a note
+saying to replace it when a run actually ran out. A run ran out: 1,069,123,488
+bytes in 641,500 allocations, because the game frees constantly (operator
+delete at 0x0056EAD0 forwards to MSVCRT `free`) and nothing came back. It is
+now size-binned free lists -- exact-size reuse up to 4 KB, first fit above.
+
+And the third real lifter bug this target has found:
+`linear_disassemble_function` stopped at the first `int3`, which is right for
+inter-function padding and wrong for the `int3` MSVC emits *inside* a function
+as the unreachable fallthrough of `__assume(0)`:
 
 ```
-if (![proc+0x1B4])  return proc->Update(...)        /* not a boot process */
-if (![proc+0x1B0] || ![[proc+0x1B0]+0xC])           /* boot thread finished */
-     manager->RemoveProcess(proc)
-return 1
+0077C86F  jbe  0x77c872
+0077C871  int3
+0077C872  <the rest of the function>
 ```
 
-So **the process lives exactly as long as its boot thread.** That is the
-design, not a bug.
+Everything the `jcc` jumped over was dropped -- silently, because the extent
+walk had the right answer and 0x0077C872 was already a known leader, so the
+body kept a label it could not place, `generate.py` turned that into a tail
+transfer, and `RECOMP_ITAIL` cannot resolve a VA that was never lifted. The
+transfer did nothing and the function fell through to its caller. One line of
+evidence: `ITAIL: unresolved VA 0x0077C872 from 0x0077C6E0`. Fixed upstream in
+pcrecomp; 5 bodies in this binary change and 431 instructions come back.
 
-The boot thread's body is `CProcessThread::Tick` (`sub_00524A80`), which is
-`GetTickCount()`, a delta, and `process->Update(template, dt)` -- one frame.
-It ran **61 times** and then stopped, because `sub_005261C0` returned 0:
-
-```
-alive = sub_00526A20(threads...) != 0  &&  [proc+0x258] == 0
-```
-
-`sub_00526A20` walks the section's script threads; when none of them has
-anything left to run, it returns 0. The section's script had finished.
-
-### The script trace
-
-`tools/scriptmap.py` recovers the script-function registry from the lifted
-code -- every subsystem is registered with an id, a name and a help string, so
-156 is `If`, 384 is `String`, 821 is `Smush`, 900 is `Screen`, 936 is
-`Protocol@GamePPMultiplayer`, 940 is `RE3D`. `GamePPVisLibraryManager::
-GetLibrary` is `sub_0052C300`, a one-argument lookup into a 1024-entry table,
-so
+### What the run does now
 
 ```
-focom.exe game/Focom.exe --run --argtrace 0x0052C300
+SetDisplayMode 640x480 16bpp
+CreateSurface  640x480 16bpp caps=PRIMARY|FLIP|COMPLEX|3DDEVICE  -> primary + back buffer
+EnumZBufferFormats -> 3 formats
+CreateSurface  640x480 16bpp caps=ZBUFFER                        -> Z buffer, attached
+IDirect3D7::CreateDevice                                         -> device
+IDirect3DDevice7::GetCaps / EnumTextureFormats / GetRenderTarget
+Surface::Lock / Unlock, IDirect3DDevice7::Load                   -> texture upload
+SetRenderState / SetTexture / SetTextureStageState
+BeginStateBlock / EndStateBlock / SetMaterial
 ```
 
-prints the subsystem each script line calls. Two threads run script: 3,440
-dispatches on the boot thread and 1,734 on a second. The boot thread's script
-uses `Message` (314), `Text Bounds` (281), `Mouse` (185), `String` (172),
-`RE3D` (169), `Protocol` (120), `RE3DStage` (115), `Smush` (12), `Wait If`
-(12), `Wait Forever` (6), `Wait` (3), `Stop` (3) -- a front end, driving a 2D
-interface over 61 frames.
-
-`Wait Forever` works: `GamePPGlobalSysWaitForever::Execute` (`sub_005D48F0`)
-sets bit 2 of the context's flag word at `+0x30`, and the interpreter's
-line-runner `sub_00512170` reads it back and returns 0 for "do not advance".
-The idiom it uses is `and al,0x14 / neg al / sbb eax,eax / inc eax`, which
-needs NEG's carry -- the lifter emits it (that fix predates this work), and
-the lifted C is correct. A parked thread yields to the next script thread,
-which is why lines keep running after it.
-
-The script's last dispatch is subsystem **936, `Protocol@GamePPMultiplayer`**,
-and the last shim call in the whole run is `IDirectPlayLobby::
-GetConnectionSettings`, which answers `DPERR_NOTLOBBIED` -- the correct answer
-for a launch that did not come from a lobby. Then the boot thread's body
-returns, the manager reaps the process, and WinMain returns.
+`IDirect3DDevice7` is implemented: all 49 methods, with the purge count of
+each taken from the headers rather than guessed, state setters that remember
+and getters that hand back, a real `Clear` that clears the render target, and
+the `DrawPrimitive` family accepting and counting its vertices. Rasterising is
+the next job and it is a big one; this is the layer that had to exist first.
 
 ### What is not the cause
 
-Ruled out by measurement, so as not to be re-guessed:
+Ruled out by measurement earlier, so as not to be re-guessed:
 
 - **Not a null process manager.** `GamePPProdBase + 0x94` holds a live
   GamePPVisProcessManager. An earlier note here said otherwise; that came from
-  a `--poison` address captured in a different run, and allocation order
+  a `--poison` address captured in a *different run*, and allocation order
   varies once the game's own threads are up.
-- **Not thread starvation.** Coarse preemption of the machine lock (hand it
-  over every N function entries) was implemented and tried at N = 500, 5,000
-  and 50,000. No change: the main thread is not waiting, it has 7.8 million
-  calls of its own to make compiling 1,713 object templates out of 9,554
-  archive members while the worker runs the script.
+- **Not thread starvation.** Coarse preemption of the machine lock was
+  implemented and tried at every 500, 5,000 and 50,000 function entries. No
+  change: the main thread is not waiting, it has 7.8 million calls of its own
+  to make compiling 1,713 object templates out of 9,554 archive members.
 - **Not a wall-clock timeout.** `--waitscale 100` changes nothing.
-- **Not the frame tick.** `sub_0051D480`, the base's slot 62, is willing to
-  keep ticking; the loop ends because the live-process count goes to zero.
 - **Not an error the game noticed.** The game ships with its assert and log
-  machinery LIVE: ~2,500 sites test a byte at 0x00833878 and report through a
-  `std::fstream`. Startup clears that byte (it is set from a setting named
-  `permitSyncChecking`, which has to read `"on"`), so the reports were being
-  skipped; with the byte poked back on
-
-  ```
-  focom.exe game/Focom.exe --run --poke 0x00833878 1 0x0052C300
-  ```
-
-  the log file is opened and flushed three times and **nothing is ever
-  queued** -- `sub_00403900`, the report formatter, is entered zero times.
-
-### The open question
-
-No Direct3D device is ever created. RE3D gets as far as enumerating drivers and
-probing devices -- `CDD7Driver::CreateDevice` builds a 2,568-byte `CDD7Device`,
-enumerates 8 display modes, registers three renderers, and the whole thing is
-torn down again, which is what a probe pass looks like -- and then the screen
-code is never entered at all. The `Screen` subsystem's script API is `Init`,
-`Done`, `FullScreen(Width, Height, Bits Per Pixel)` and `Windowed(Width,
-Height)`; `CEngine@RE3D` slots 6, 8 and 10 are never called, and
-`CDD7WinScreen` / `CDD7FSScreen` never run.
-
-So the front end runs its 61 frames with no renderer and finishes. The next
-step is to find which `Screen` call the script makes and what it gets back:
-the function index is in the line record, not in the `GetLibrary` argument, so
-reading it needs one more hop than `--argtrace` currently gives.
+  machinery LIVE -- about 2,500 sites test a byte at 0x00833878 and report
+  through a `std::fstream`. Startup clears it from a setting named
+  `permitSyncChecking` that has to read `"on"`, so the reports were being
+  skipped. With `--poke 0x00833878 1 0x0052C300` the log opens and flushes and
+  the report formatter is never entered once.

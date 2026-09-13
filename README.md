@@ -278,21 +278,23 @@ Run 2 1 6                 -> starts the "Trasse - Day" section as a process
 HideLoadingPanel
 ```
 
-CreateThread is now honoured -- one thread runs lifted code at a time, with the
-switch points at the blocking shims -- and the section's script really runs:
-3,440 script lines over **61 frames**, driving Message, Text, Mouse, String,
-RE3D and Protocol. Then the script finishes, the boot thread returns, the
-process manager reaps the process because a boot process lives exactly as long
-as its boot thread, the main loop's live-process count reaches zero, and
-WinMain returns.
+CreateThread is honoured -- one thread runs lifted code at a time, with the
+switch points at the blocking shims -- and the section's script really runs.
 
-Nothing is drawn. No Direct3D device is ever created: RE3D enumerates drivers
-and probes a device, and the screen code is never entered. And nothing goes
-wrong on the way -- the game's own assert and log machinery is live in the
-retail build and, with the flag it needs poked back on, reports nothing at all.
+Then **RE3D comes up**: a 640x480 16bpp mode, a flipping primary with a back
+buffer, an attached Z buffer, a Direct3D 7 device, texture formats enumerated,
+textures uploaded, render state and materials set. All 49 `IDirect3DDevice7`
+methods are implemented, with the purge count of each taken from the headers.
+Nothing is rasterised yet -- `Clear` really clears the render target and the
+`DrawPrimitive` family accepts and counts its vertices -- so that is the next
+job.
 
-`docs/STARTUP.md` has the measured chain, the five explanations that were ruled
-out, and the one open question.
+Getting that far took one discovery and four corrections, all of the same
+shape, and `docs/STARTUP.md` has them: the game's screen gate reads
+`dwDeviceRenderBitDepth` at a hardcoded `device + 0x454`, which is the **HAL**
+slot of the four device descriptions it keeps inline, so offering only the RGB
+software device made it skip the entire screen and renderer setup and run its
+front end for 61 frames with nothing to draw on.
 
 ## Where it goes next
 

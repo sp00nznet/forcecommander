@@ -1447,7 +1447,50 @@ static void d3d_CreateVertexBuffer(void) {
     RET(DD_OK); STDRET(4);
 }
 
-static void d3d_EnumZBufferFormats(void) { RET(DD_OK); STDRET(4); }
+/*
+ * EnumZBufferFormats(riidDevice, callback, context).
+ *
+ * Same shape as every other enumeration in this file, and the same trap:
+ * returning DD_OK without calling back is an empty list, not "any format will
+ * do". The game got a Z buffer anyway because it falls back to the display
+ * depth, but a renderer that asks for the list and indexes it is one fault
+ * away. 16-bit Z and 24-bit Z with 8 bits of stencil, which is what a DX7 part
+ * of this era reported.
+ */
+static void d3d_EnumZBufferFormats(void) {
+    uint32_t cb = ARG(2), ctx = ARG(3);
+    recomp_func_t f = cb ? recomp_lookup(cb) : NULL;
+    if (!f) { RET(DD_OK); STDRET(4); return; }
+
+    static const struct { uint32_t zbits, sbits, zmask, smask; } zf[] = {
+        {16, 0, 0x0000FFFFu, 0},
+        {24, 8, 0xFFFFFF00u, 0x000000FFu},
+        {32, 0, 0xFFFFFFFFu, 0},
+    };
+    uint32_t pf = crt_alloc(32);
+    for (unsigned i = 0; i < sizeof zf / sizeof zf[0]; i++) {
+        for (uint32_t k = 0; k < 32; k += 4) MEM32(pf + k) = 0;
+        MEM32(pf + 0x00) = 32;                     /* dwSize */
+        MEM32(pf + 0x04) = 0x00000400u             /* DDPF_ZBUFFER */
+                         | (zf[i].sbits ? 0x00004000u : 0u); /* DDPF_STENCILBUFFER */
+        MEM32(pf + 0x0C) = zf[i].zbits;            /* dwZBufferBitDepth */
+        MEM32(pf + 0x10) = zf[i].sbits;            /* dwStencilBitDepth */
+        MEM32(pf + 0x14) = zf[i].zmask;            /* dwZBitMask */
+        MEM32(pf + 0x18) = zf[i].smask;            /* dwStencilBitMask */
+
+        uint32_t save = g_esp, save_fn = g_cur_func;
+        PUSH32(g_esp, ctx);
+        PUSH32(g_esp, pf);
+        PUSH32(g_esp, RECOMP_RETADDR);
+        f();
+        g_cur_func = save_fn;
+        if (g_esp != save) g_esp = save;
+        if (g_eax == 0) break;                     /* D3DENUMRET_CANCEL */
+    }
+    fprintf(stderr, "[d3d] EnumZBufferFormats -> %u formats offered\n",
+            (unsigned)(sizeof zf / sizeof zf[0]));
+    RET(DD_OK); STDRET(4);
+}
 static void d3d_EvictManagedTextures(void) { RET(DD_OK); STDRET(1); }
 
 /* ------------------------------------------------- IDirect3DDevice7
