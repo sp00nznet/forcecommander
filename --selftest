@@ -1,0 +1,962 @@
+{
+ "32": {
+  "name": "Text Bounds",
+  "help": "Determines Length of Text String",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "34": {
+  "name": "Variable",
+  "help": "Variable supports access to 32-bit variables",
+  "registrar": 6684144,
+  "handlers": []
+ },
+ "35": {
+  "name": "Wrap Text",
+  "help": "Draws a word-wrapped string of text on the screen and updates Position height",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "36": {
+  "name": "Resource",
+  "help": "Resource supports access to resources",
+  "registrar": 6675376,
+  "handlers": []
+ },
+ "37": {
+  "name": "Array",
+  "help": "Array supports array of 32 bit values",
+  "registrar": 6670704,
+  "handlers": []
+ },
+ "38": {
+  "name": "StructureArray",
+  "help": "StructureArray supports access to arrays of structure variables",
+  "registrar": 6666240,
+  "handlers": []
+ },
+ "41": {
+  "name": "EventFunction",
+  "help": "EventFunction supports access to event arguments",
+  "registrar": 6659792,
+  "handlers": []
+ },
+ "33": {
+  "name": "Const",
+  "help": "Const supports access to predefined constant values",
+  "registrar": 6654896,
+  "handlers": []
+ },
+ "43": {
+  "name": "OBSOLETE Anim PreDraw Turret",
+  "help": "Replace this with the 'AnimDraw+RefPts' Draw Function",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "44": {
+  "name": "d\u00a1",
+  "help": "j\u00ffh[\u00c6{",
+  "registrar": 5697050,
+  "handlers": []
+ },
+ "45": {
+  "name": "Anim PreDraw+RefPts",
+  "help": "Draw 3D model with a number(int) of rotated(transformation[]) Reference Points(int[])",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "512": {
+  "name": "Bool",
+  "help": "Bool performs Bool operations and conversions",
+  "registrar": 6642704,
+  "handlers": []
+ },
+ "515": {
+  "name": "Char",
+  "help": "Char performs Char operations and conversions",
+  "registrar": 6638112,
+  "handlers": []
+ },
+ "520": {
+  "name": "Int",
+  "help": "Int performs Int operations and conversions",
+  "registrar": 6631376,
+  "handlers": []
+ },
+ "525": {
+  "name": "Float",
+  "help": "Float performs Float operations and conversions",
+  "registrar": 6613936,
+  "handlers": []
+ },
+ "530": {
+  "name": "Angle",
+  "help": "Angle performs Angle operations and conversions",
+  "registrar": 6594576,
+  "handlers": []
+ },
+ "560": {
+  "name": "ObjectID",
+  "help": "ObjectIDs contain reference to created objects",
+  "registrar": 6571728,
+  "handlers": [
+   5963216
+  ]
+ },
+ "565": {
+  "name": "TemplateID",
+  "help": "TemplateIDs contain Object Template references",
+  "registrar": 6559536,
+  "handlers": []
+ },
+ "542": {
+  "name": "RE3DRoom",
+  "help": "RE3DRoom performs RE3DRoom operations and conversions",
+  "registrar": 6549440,
+  "handlers": []
+ },
+ "543": {
+  "name": "RE3DObjectInstance",
+  "help": "RE3DObjectInstance performs RE3DObjectInstance operations and conversions",
+  "registrar": 6526240,
+  "handlers": []
+ },
+ "544": {
+  "name": "RE3DObject",
+  "help": "RE3DObject performs RE3DObject operations and conversions",
+  "registrar": 6481840,
+  "handlers": []
+ },
+ "545": {
+  "name": "RE3DObject2D",
+  "help": "RE3DObject2D performs RE3DObject2D operations and conversions",
+  "registrar": 6438720,
+  "handlers": []
+ },
+ "546": {
+  "name": "RE3DAnimation",
+  "help": "RE3DAnimation performs RE3DAnimation operations and conversions",
+  "registrar": 6417824,
+  "handlers": []
+ },
+ "547": {
+  "name": "RE3DMaterial",
+  "help": "RE3DMaterial performs RE3DMaterial operations and conversions",
+  "registrar": 6395648,
+  "handlers": []
+ },
+ "548": {
+  "name": "RE3DTexture",
+  "help": "RE3DTexture performs RE3DTexture operations and conversions",
+  "registrar": 6384992,
+  "handlers": []
+ },
+ "549": {
+  "name": "RE3DLight",
+  "help": "RE3DLight performs RE3DLight operations and conversions",
+  "registrar": 6371680,
+  "handlers": []
+ },
+ "640": {
+  "name": "ButtonState",
+  "help": "ButtonState enumerated type",
+  "registrar": 6365648,
+  "handlers": []
+ },
+ "645": {
+  "name": "VirtualKey",
+  "help": "VirtualKey enumerated type",
+  "registrar": 6362464,
+  "handlers": []
+ },
+ "650": {
+  "name": "RE3DStage",
+  "help": "RE3DStage enumerated type",
+  "registrar": 6361120,
+  "handlers": []
+ },
+ "655": {
+  "name": "RE3DMaterialType",
+  "help": "RE3DMaterialType enumerated type",
+  "registrar": 6359712,
+  "handlers": []
+ },
+ "656": {
+  "name": "RE3DBlendMode",
+  "help": "RE3DBlendMode enumerated type",
+  "registrar": 6358640,
+  "handlers": []
+ },
+ "665": {
+  "name": "RE3DTextureFilter",
+  "help": "RE3DTextureFilter enumerated type",
+  "registrar": 6357408,
+  "handlers": []
+ },
+ "670": {
+  "name": "RE3DUVType",
+  "help": "RE3DUVType enumerated type",
+  "registrar": 6356272,
+  "handlers": []
+ },
+ "391": {
+  "name": "Size",
+  "help": "Size operations",
+  "registrar": 6354464,
+  "handlers": []
+ },
+ "390": {
+  "name": "Point",
+  "help": "Point operations",
+  "registrar": 6343872,
+  "handlers": []
+ },
+ "398": {
+  "name": "Rect",
+  "help": "Rectangle operations",
+  "registrar": 6334384,
+  "handlers": []
+ },
+ "385": {
+  "name": "Vector",
+  "help": "A 3D Vector represents a position or displacement in 3D space",
+  "registrar": 6315760,
+  "handlers": []
+ },
+ "386": {
+  "name": "Matrix",
+  "help": "A 3D Matrix represents a rotation + scaling + smear + mirror",
+  "registrar": 6296016,
+  "handlers": []
+ },
+ "387": {
+  "name": "Transformation",
+  "help": "A 3D Transformation represents a rotation + scaling + smear + mirror + translation",
+  "registrar": 6282496,
+  "handlers": []
+ },
+ "384": {
+  "name": "String",
+  "help": "String operations",
+  "registrar": 6267360,
+  "handlers": []
+ },
+ "408": {
+  "name": "Color",
+  "help": "Color operations",
+  "registrar": 6259952,
+  "handlers": []
+ },
+ "430": {
+  "name": "Position",
+  "help": "A 3D Position represents vector, rotation, scale, vel, accel, transform",
+  "registrar": 6241520,
+  "handlers": []
+ },
+ "444": {
+  "name": "Sky",
+  "help": "A 3D Sky as a textured layer of polygons",
+  "registrar": 6235952,
+  "handlers": []
+ },
+ "446": {
+  "name": "Global Weather",
+  "help": "A Global Weather generates a stream of particles",
+  "registrar": 6223120,
+  "handlers": []
+ },
+ "423": {
+  "name": "ObjectID List",
+  "help": "A ObjectID List contains an optimized list of objectIDs",
+  "registrar": 6206512,
+  "handlers": []
+ },
+ "427": {
+  "name": "TemplateFlag",
+  "help": "TemplateFlag operations",
+  "registrar": 6194592,
+  "handlers": []
+ },
+ "426": {
+  "name": "TemplateFlagValue",
+  "help": "TemplateFlagValue operations",
+  "registrar": 6187328,
+  "handlers": []
+ },
+ "425": {
+  "name": "TemplateFlagMask",
+  "help": "TemplateFlagMask operations",
+  "registrar": 6186560,
+  "handlers": []
+ },
+ "452": {
+  "name": "RE3DFOWObject",
+  "help": "RE3DFOWObject performs RE3DFOWObject3D operations and conversions",
+  "registrar": 6185056,
+  "handlers": []
+ },
+ "775": {
+  "name": "Sound effect",
+  "help": "Manages sound effects",
+  "registrar": 6179920,
+  "handlers": []
+ },
+ "776": {
+  "name": "Voice",
+  "help": "Manages Voice",
+  "registrar": 6172400,
+  "handlers": []
+ },
+ "768": {
+  "name": "Text",
+  "help": "Manages text",
+  "registrar": 6166400,
+  "handlers": []
+ },
+ "790": {
+  "name": "Font",
+  "help": "Manages fonts",
+  "registrar": 6163136,
+  "handlers": []
+ },
+ "780": {
+  "name": "3D Model",
+  "help": "A 3D Model is an imported 3D object",
+  "registrar": 6141792,
+  "handlers": []
+ },
+ "785": {
+  "name": "3D Anim",
+  "help": "A 3D Anim is an animation that plays on a 3D object",
+  "registrar": 6136160,
+  "handlers": []
+ },
+ "795": {
+  "name": "Texture File",
+  "help": "A Texture File is a bitmap that will be used as a 3D texture",
+  "registrar": 6134352,
+  "handlers": []
+ },
+ "810": {
+  "name": "Height Map",
+  "help": "Allows access to Height Map",
+  "registrar": 6128880,
+  "handlers": []
+ },
+ "811": {
+  "name": "Grade Map",
+  "help": "Allows access to Grade Map",
+  "registrar": 6121568,
+  "handlers": []
+ },
+ "815": {
+  "name": "Visible Map",
+  "help": "Allows access to Visible Map",
+  "registrar": 6119088,
+  "handlers": []
+ },
+ "821": {
+  "name": "Smush",
+  "help": "Manages Smush Movies",
+  "registrar": 6117776,
+  "handlers": []
+ },
+ "128": {
+  "name": "NOOP",
+  "help": "NOOP performs no operation",
+  "registrar": 6116576,
+  "handlers": []
+ },
+ "129": {
+  "name": "Comment",
+  "help": "Comment performs no operation",
+  "registrar": 6116112,
+  "handlers": []
+ },
+ "130": {
+  "name": "Find Ally Near Mask or Mask Entry",
+  "help": "Find Ally Near Mask or Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "131": {
+  "name": "Call Parent",
+  "help": "Call Parent supports running the same section, as defined by a parent object template",
+  "registrar": 6114176,
+  "handlers": [
+   5963216
+  ]
+ },
+ "132": {
+  "name": "Stop",
+  "help": "Stop current thread",
+  "registrar": 6113664,
+  "handlers": []
+ },
+ "139": {
+  "name": "Find Ally In Range Mask Entry",
+  "help": "Find Ally In Range Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "140": {
+  "name": "Find Ally List In Range Mask Entry",
+  "help": "Find Ally List Near Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "141": {
+  "name": "Wait If",
+  "help": "Wait If supports conditional delay in state functions",
+  "registrar": 6111712,
+  "handlers": []
+ },
+ "133": {
+  "name": "Set",
+  "help": "Set allows modification of variables",
+  "registrar": 6111296,
+  "handlers": []
+ },
+ "136": {
+  "name": "Find Ally List Near Mask Entry",
+  "help": "Find Ally List Near Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "137": {
+  "name": "Find Ally List Near Mask or Mask Entry",
+  "help": "Find Ally List Near Mask or Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "156": {
+  "name": "If",
+  "help": "If supports conditional if, elseif, else, endif",
+  "registrar": 6109296,
+  "handlers": [
+   6108528
+  ]
+ },
+ "158": {
+  "name": "ElseIf",
+  "help": "ElseIf supports conditional if, elseif, else, endif",
+  "registrar": 6108160,
+  "handlers": [
+   6108528
+  ]
+ },
+ "157": {
+  "name": "Else",
+  "help": "Else supports conditional if, elseif, else, endif",
+  "registrar": 6107424,
+  "handlers": [
+   6104208
+  ]
+ },
+ "159": {
+  "name": "EndIf",
+  "help": "EndIf supports conditional if, elseif, else, endif",
+  "registrar": 6106688,
+  "handlers": [
+   6104208
+  ]
+ },
+ "164": {
+  "name": "While",
+  "help": "While supports conditional while, endwhile",
+  "registrar": 6105968,
+  "handlers": [
+   6104208
+  ]
+ },
+ "165": {
+  "name": "Add Shadow",
+  "help": "Adds a shadow to the system",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "168": {
+  "name": "Do",
+  "help": "Do supports until",
+  "registrar": 6104688,
+  "handlers": [
+   6104208
+  ]
+ },
+ "169": {
+  "name": "Until",
+  "help": "Until supports do",
+  "registrar": 6103840,
+  "handlers": [
+   6104208
+  ]
+ },
+ "176": {
+  "name": "For",
+  "help": "For supports endfor",
+  "registrar": 6101472,
+  "handlers": [
+   6104208
+  ]
+ },
+ "177": {
+  "name": "EndFor",
+  "help": "EndFor supports for,endfor pair",
+  "registrar": 6100768,
+  "handlers": [
+   6104208
+  ]
+ },
+ "170": {
+  "name": "Set Radar Map Texture",
+  "help": "Changes the radar map texture",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "171": {
+  "name": "Loop Forever",
+  "help": "Loop Forever supports endless loops",
+  "registrar": 6099088,
+  "handlers": [
+   6104208
+  ]
+ },
+ "172": {
+  "name": "Loop",
+  "help": "Loop supports fixed-length loops",
+  "registrar": 6098368,
+  "handlers": [
+   6104208
+  ]
+ },
+ "173": {
+  "name": "EndLoop",
+  "help": "EndLoop supports loop, endloop pair",
+  "registrar": 6097632,
+  "handlers": [
+   6104208
+  ]
+ },
+ "180": {
+  "name": "Show Radar Map",
+  "help": "Shows or hides the radar map display",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "181": {
+  "name": "Case",
+  "help": "Case supports switch and endcase",
+  "registrar": 6095472,
+  "handlers": [
+   6095120
+  ]
+ },
+ "182": {
+  "name": "Case Range",
+  "help": "Case Range supports switch and case",
+  "registrar": 6094240,
+  "handlers": [
+   6095120
+  ]
+ },
+ "185": {
+  "name": "Add Height Adjust",
+  "help": "Add Height Adjust",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "183": {
+  "name": "Or Case",
+  "help": "Or Case supports switch",
+  "registrar": 6092032,
+  "handlers": [
+   6095120
+  ]
+ },
+ "184": {
+  "name": "Or Case Range",
+  "help": "Or Case Range supports switch",
+  "registrar": 6090544,
+  "handlers": [
+   6095120
+  ]
+ },
+ "186": {
+  "name": "GetHeightAdjust",
+  "help": "Get Height Adjust",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "896": {
+  "name": "System",
+  "help": "System functions help",
+  "registrar": 6085392,
+  "handlers": []
+ },
+ "898": {
+  "name": "Save Game",
+  "help": "Save Game functions help",
+  "registrar": 6080000,
+  "handlers": []
+ },
+ "899": {
+  "name": "Player",
+  "help": "Player functions help",
+  "registrar": 6073840,
+  "handlers": []
+ },
+ "937": {
+  "name": "Options",
+  "help": "Options functions help",
+  "registrar": 6067616,
+  "handlers": []
+ },
+ "57": {
+  "name": "Message",
+  "help": "Message supports user messages",
+  "registrar": 6065008,
+  "handlers": []
+ },
+ "900": {
+  "name": "Screen",
+  "help": "Screen subsystem help",
+  "registrar": 6045232,
+  "handlers": []
+ },
+ "906": {
+  "name": "2D Render",
+  "help": "2D Render subsystem help",
+  "registrar": 6030112,
+  "handlers": []
+ },
+ "905": {
+  "name": "3D Render",
+  "help": "3D Render subsystem help",
+  "registrar": 6006912,
+  "handlers": []
+ },
+ "910": {
+  "name": "Sound",
+  "help": "Sound subsystem help",
+  "registrar": 6004976,
+  "handlers": []
+ },
+ "911": {
+  "name": "Sound Environment",
+  "help": "Sound Environment functions help",
+  "registrar": 5998080,
+  "handlers": []
+ },
+ "912": {
+  "name": "Music",
+  "help": "Music subsystem help",
+  "registrar": 5994288,
+  "handlers": []
+ },
+ "920": {
+  "name": "Keyboard",
+  "help": "Keyboard subsystem help",
+  "registrar": 5991680,
+  "handlers": []
+ },
+ "925": {
+  "name": "Mouse",
+  "help": "Mouse subsystem help",
+  "registrar": 5989616,
+  "handlers": []
+ },
+ "940": {
+  "name": "RE3D",
+  "help": "RE3D subsystem help",
+  "registrar": 5968656,
+  "handlers": []
+ },
+ "945": {
+  "name": "Spatial List",
+  "help": "Spatial List functions help",
+  "registrar": 5919712,
+  "handlers": []
+ },
+ "456": {
+  "name": "Focom Movement",
+  "help": "A Focom Movement supports moving on a landscape",
+  "registrar": 5833728,
+  "handlers": []
+ },
+ "457": {
+  "name": "FCUnitMove",
+  "help": "A Focom Unit Movement supports moving on a landscape",
+  "registrar": 5820592,
+  "handlers": []
+ },
+ "840": {
+  "name": "Focom Landscape Resource",
+  "help": "A Focom 3D landscape Resource",
+  "registrar": 5806288,
+  "handlers": []
+ },
+ "458": {
+  "name": "Focom Emitter",
+  "help": "A Focom Emitter generates a stream of particles",
+  "registrar": 5784320,
+  "handlers": []
+ },
+ "459": {
+  "name": "Focom UnitList",
+  "help": "A Focom UnitList contains an optimized list of units",
+  "registrar": 5757056,
+  "handlers": []
+ },
+ "460": {
+  "name": "Focom TreeList",
+  "help": "A Focom TreeList manages a large number of trees",
+  "registrar": 5748928,
+  "handlers": []
+ },
+ "968": {
+  "name": "Focom System",
+  "help": "Focom System C++ Support",
+  "registrar": 5733472,
+  "handlers": []
+ },
+ "125": {
+  "name": "Find Ally Near Mask Entry",
+  "help": "Find Ally Near Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "100": {
+  "name": "Set Neutral",
+  "help": "Set Neutral To Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "105": {
+  "name": "Is Neutral To Group",
+  "help": "Is Neutral To Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "110": {
+  "name": "Is Neutral To Player Group",
+  "help": "Is Neutral To Player Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "115": {
+  "name": "Emit Cube",
+  "help": "Emit Cube",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "30": {
+  "name": "Clear Group Weights",
+  "help": "Clear Group Weights",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "40": {
+  "name": "Is Open Spot",
+  "help": "Is Open Spot",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "50": {
+  "name": "Get Box Floats",
+  "help": "Get the bounding box values as floats in an array",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "55": {
+  "name": "Find Near Mask Entry",
+  "help": "Find Near Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "60": {
+  "name": "Find Near Mask or Mask Entry",
+  "help": "Find Near Mask or Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "65": {
+  "name": "Find List Near Entry",
+  "help": "Find List Near Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "66": {
+  "name": "Find List Near Mask Entry",
+  "help": "Find List Near Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "67": {
+  "name": "Find List Near Mask or Mask Entry",
+  "help": "Find List Near Mask or Mask Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "70": {
+  "name": "Is Entry Visible To Group",
+  "help": "Is Entry Visible To Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "75": {
+  "name": "Is Entry Visible To Player Group",
+  "help": "Is Entry Visible To Player Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "77": {
+  "name": "Is Entry Scanned By Group",
+  "help": "Is Entry Scanned By Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "78": {
+  "name": "Is Entry Scanned By Player Group",
+  "help": "Is Entry Scanned By Player Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "80": {
+  "name": "Send Self",
+  "help": "Send Message",
+  "registrar": 5696352,
+  "handlers": []
+ },
+ "85": {
+  "name": "Set Ally",
+  "help": "Set Ally To Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "90": {
+  "name": "Is Ally To Group",
+  "help": "Is Ally To Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "95": {
+  "name": "Is Ally To Player Group",
+  "help": "Is Ally To Player Group",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "97": {
+  "name": "Set Ally Visible",
+  "help": "Set Ally Visible",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "120": {
+  "name": "Find Ally Near Entry",
+  "help": "Find Ally Near Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "135": {
+  "name": "Find Ally List Near Entry",
+  "help": "Find Ally List Near Entry",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "150": {
+  "name": "Init Shadows",
+  "help": "Initialize shadow system",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "155": {
+  "name": "Done Shadows",
+  "help": "Uninitialize shadow system",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "160": {
+  "name": "Set Shadow Texture",
+  "help": "Initialize shadow system",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "175": {
+  "name": "Set Radar Map Rectangle",
+  "help": "Sets the radar map display rectangle",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "190": {
+  "name": "Fog Radar Map",
+  "help": "Shows or hides the radar map's fog-of-war display",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "200": {
+  "name": "Camera Radar Map",
+  "help": "Shows or hides the radar map's camera display",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "210": {
+  "name": "Camera Radar Map Data",
+  "help": "Sets the radar map's camera data display",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "31": {
+  "name": "Text",
+  "help": "Draws a string of text on the screen",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "76": {
+  "name": "Next",
+  "help": "Find Next Object",
+  "registrar": 5696352,
+  "handlers": []
+ },
+ "24": {
+  "name": "Stop Thread",
+  "help": "Stop a thread",
+  "registrar": 5696352,
+  "handlers": []
+ },
+ "112": {
+  "name": "Send",
+  "help": "Send Message",
+  "registrar": 5696352,
+  "handlers": []
+ },
+ "42": {
+  "name": "Double Anim PreDraw",
+  "help": "Draw a 3D model with two animations(Blending)",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "51": {
+  "name": "Get Box Min Max",
+  "help": "Get the bounding box values as minimum and maximum vectors",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "52": {
+  "name": "Get Box Corners",
+  "help": "Get the bounding box values as corner vectors in an array",
+  "registrar": 5744688,
+  "handlers": []
+ },
+ "20": {
+  "name": "Unload",
+  "help": "Unload Help",
+  "registrar": 5696352,
+  "handlers": []
+ },
+ "108": {
+  "name": "j\u00ffh\u00ec\u00c7{",
+  "help": "j\u00ffh\f\u00c8{",
+  "registrar": 5697050,
+  "handlers": []
+ }
+}

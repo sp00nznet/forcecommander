@@ -875,6 +875,8 @@ typedef struct {
     uint32_t      tib;
 } thread_arg;
 
+int g_threadtrace = 0;   /* --threadtrace */
+
 static DWORD WINAPI lifted_thread(LPVOID p) {
     thread_arg* a = (thread_arg*)p;
     mstate* m = (mstate*)calloc(1, sizeof *m);
@@ -891,6 +893,9 @@ static DWORD WINAPI lifted_thread(LPVOID p) {
     a->fn();
     uint32_t rc = g_eax;
     fprintf(stderr, "[k32] thread %lu routine RETURNED (rc=%u)\n", GetCurrentThreadId(), rc);
+    /* The interesting call path is the one that let the routine finish, and it
+     * is gone by the time the process is reaped, so dump the ring here. */
+    if (g_threadtrace) recomp_dump_trace("thread routine returned");
     mach_leave();
 
     free(m);

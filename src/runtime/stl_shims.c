@@ -673,6 +673,66 @@ static void ios_ctor1(void) { MEM32(THIS) = g_vbtable; RET(THIS); STDRET(1); }
  */
 static void ios_ctor2(void) { MEM32(THIS) = g_vbtable; RET(THIS); STDRET(2); }
 
+/* ------------------------------------------------ the game's own error log
+ *
+ * Focom ships with its assertions LIVE. 3,843 sites test a byte at 0x00833878
+ * that the image initialises to 1, and when one fires the game formats
+ *
+ *     <source file>(<line>) : internal error: <what>
+ *
+ * and writes it to a .log file through a std::fstream. With the iostream shims
+ * as no-ops every one of those reports was being dropped, which is why a run
+ * that goes wrong says nothing about it.
+ *
+ * The whole stream surface the binary uses is four calls -- construct a
+ * filebuf, open it, operator<< a string or a C string, close -- and there is
+ * exactly one such stream in the game, the log itself. So one FILE* is enough.
+ *
+ * ponytail: one global stream, every write echoed to stderr and flushed.
+ * Relating an ostream& back to its own streambuf would mean building MSVC's
+ * virtual-inheritance layout for basic_fstream; do that if a second stream
+ * ever turns up.
+ */
+static FILE* g_gamelog;
+
+static void fbuf_open(void) {
+    uint32_t name = ARG(0), mode = ARG(1);
+    const char* path = name ? host(name) : "";
+    /* MSVC 6 openmode: in 1, out 2, ate 4, app 8, trunc 0x10, binary 0x20 */
+    const char* how = (mode & 8) ? "ab" : (mode & 2) ? "wb" : "rb";
+    if (g_gamelog) { fclose(g_gamelog); g_gamelog = NULL; }
+    g_gamelog = fopen(path, how);
+    fprintf(stderr, "[gamelog] open(%s, 0x%X) -> %s\n", path, mode,
+            g_gamelog ? "ok" : "FAILED");
+    RET(g_gamelog ? THIS : 0); STDRET(2);
+}
+
+static void fbuf_close(void) {
+    if (g_gamelog) { fclose(g_gamelog); g_gamelog = NULL; }
+    RET(THIS); STDRET(0);
+}
+
+static void log_write(const char* p, uint32_t n) {
+    if (!n) return;
+    if (g_gamelog) { fwrite(p, 1, n, g_gamelog); fflush(g_gamelog); }
+    fprintf(stderr, "[game] %.*s", (int)n, p);
+    if (p[n - 1] != '\n') fputc('\n', stderr);
+}
+
+/* operator<<(ostream&, const char*) and (ostream&, const string&): free
+ * functions, cdecl, and they return the stream they were given. */
+static void ostr_put_cstr(void) {
+    uint32_t p = ARG(1);
+    if (p) log_write(host(p), (uint32_t)strlen(host(p)));
+    RET(ARG(0)); CDECLRET();
+}
+
+static void ostr_put_str(void) {
+    uint32_t o = ARG(1);
+    if (o) { uint32_t n = 0; const char* p = s_src(o, &n); log_write(p, n); }
+    RET(ARG(0)); CDECLRET();
+}
+
 static void nop0(void) { RET(THIS); STDRET(0); }
 static void nop1(void) { RET(THIS); STDRET(1); }
 static void nop2(void) { RET(THIS); STDRET(2); }
@@ -778,8 +838,16 @@ const struct { const char* name; import_fn_t fn; } g_stl_shims[] = {
     { P "??_D" FSTR "QAEXXZ",                       nop0 },
     { P "??0" FBUF "QAE@PAU_iobuf@@@Z",             ios_ctor1 },
     { P "??0" IOST "QAE@PAV" SBUFP "@1@@Z",         ios_ctor2 },
-    { P "?close@" FBUF "QAEPAV12@XZ",               nop0 },
-    { P "?open@" FBUF "QAEPAV12@PBDH@Z",            nop2 },
+    { P "?close@" FBUF "QAEPAV12@XZ",               fbuf_close },
+    { P "?open@" FBUF "QAEPAV12@PBDH@Z",            fbuf_open },
+    /* The log's two writers. Free functions, so the enclosing std:: is a
+     * backreference: the ostream reads `@0@` and the string `@2@@0@`, not the
+     * `@std@@` a member would use. */
+    { P "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@"
+        "AAV10@PBD@Z",                              ostr_put_cstr },
+    { P "??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@"
+        "AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z",
+                                                    ostr_put_str },
     { P "?clear@" IOS "QAEXH_N@Z",                  nop2 },
     { P "?clear@ios_base@std@@QAEXH_N@Z",           nop2 },
     { P "?setstate@" IOS "QAEXH_N@Z",               nop2 },

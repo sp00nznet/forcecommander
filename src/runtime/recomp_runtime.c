@@ -52,6 +52,7 @@ FILE* g_calltrace = NULL;
  * member is dereferenced; only a run tells you what is in it. */
 int g_list_stubs = 0;
 extern int g_no_threads;
+extern int g_threadtrace;
 void mach_init(void);
 void mach_enter(void);
 void mach_leave(void);
@@ -66,9 +67,45 @@ extern const char* g_cur_import;
 uint32_t g_watch[8];
 unsigned g_watch_n = 0;
 
+/*
+ * --firsthit LO HI: the first entry to each distinct function in [LO,HI),
+ * printed in order with the thread that got there.
+ *
+ * A full --calltrace answers "what ran", but at 7.9 million lines it is slower
+ * than the thing being measured, and the question during bring-up is almost
+ * always narrower: did execution ever reach THIS subsystem, and in what order.
+ * One bit per 4-byte-aligned address over the chosen window costs a range
+ * check and a bit test per call, so it can be left on for a whole run.
+ */
+static uint32_t g_fh_lo, g_fh_hi;
+static uint8_t* g_fh_seen;
+
+/* --argtrace VA: one line per entry to VA with its first three stack
+ * arguments. A --watch line is 7 lines of registers and object dump, which is
+ * the wrong shape when the question is "what sequence of ids went through this
+ * one dispatcher". */
+static uint32_t g_at[4];
+static unsigned g_at_n;
+
 void recomp_trace_enter(uint32_t va) {
+    /* Keep the ring backtrace fed: recomp_dump_trace is what prints a call
+     * path after a fault, and a diagnostic that has quietly stopped recording
+     * is worse than none. */
+    g_enter_trace[g_enter_idx++ & (RECOMP_ENTER_SIZE - 1)] = va;
+    if (g_fh_seen && va >= g_fh_lo && va < g_fh_hi) {
+        uint32_t i = (va - g_fh_lo) >> 2;
+        if (!(g_fh_seen[i >> 3] & (1u << (i & 7)))) {
+            g_fh_seen[i >> 3] |= (uint8_t)(1u << (i & 7));
+            fprintf(stderr, "[first] t%lu 0x%08X\n", GetCurrentThreadId(), va);
+        }
+    }
     /* Tagged with the thread, because the trace interleaves the game's own
      * worker threads with the main one and a flat sequence cannot be read. */
+    for (unsigned t = 0; t < g_at_n; t++)
+        if (g_at[t] == va)
+            fprintf(stderr, "[args] t%lu %08X %08X %08X %08X\n",
+                    GetCurrentThreadId(), va,
+                    MEM32(g_esp + 4), MEM32(g_esp + 8), MEM32(g_esp + 12));
     if (g_calltrace) fprintf(g_calltrace, "%lu %08X\n",
                              GetCurrentThreadId(), va);
     /* --poison ADDR reports the first moment a target dword turns into the
@@ -93,18 +130,16 @@ void recomp_trace_enter(uint32_t va) {
                 g_esi, g_edi, g_esp);
         for (int k = 4; k <= 0x20; k += 4) fprintf(stderr, " %08X", MEM32(g_esp + k));
         fprintf(stderr, "\n");
-        if (g_ecx >= 0x00200000u) {
-            fprintf(stderr, "[watch]   [ecx+00..20]:");
-            for (int k = 0; k <= 0x20; k += 4)
-                fprintf(stderr, " %08X", MEM32(g_ecx + k));
-            fprintf(stderr, "\n");
-        }
-        if (g_ecx >= 0x00200000u) {
-            fprintf(stderr, "[watch]   [ecx+88..A4]:");
-            for (int q = 0x88; q <= 0xA4; q += 4)
-                fprintf(stderr, " %08X", MEM32(g_ecx + q));
-            fprintf(stderr, "\n");
-        }
+        /* The object under ecx, 0x00..0x9C: wide enough for the vptr, the
+         * embedded base subobjects and the members the bring-up cares
+         * about, without needing a recompile per field. */
+        if (g_ecx >= 0x00200000u)
+            for (int row = 0; row < 0xA0; row += 0x20) {
+                fprintf(stderr, "[watch]   [ecx+%02X]:", row);
+                for (int k = 0; k < 0x20; k += 4)
+                    fprintf(stderr, " %08X", MEM32(g_ecx + row + k));
+                fprintf(stderr, "\n");
+            }
         {   /* identify the object at +0x94 by its vptr */
             uint32_t o = MEM32(g_ecx + 0x94);
             fprintf(stderr, "[watch]   [ecx+0x94]=0x%08X vptr=0x%08X\n",
@@ -513,6 +548,7 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS* ep) {
         fprintf(stderr, "  faulting module: %s +0x%llX\n", mn,
                 (unsigned long long)((uintptr_t)r->ExceptionAddress - (uintptr_t)fm));
     }
+    if (g_calltrace) fflush(g_calltrace);
     fprintf(stderr, "current lifted function: 0x%08X\n", g_cur_func);
     fprintf(stderr, "last import entered: %s\n", g_cur_import);
     fprintf(stderr, "eax=%08X ecx=%08X edx=%08X ebx=%08X\n", g_eax, g_ecx, g_edx, g_ebx);
@@ -549,10 +585,21 @@ int main(int argc, char** argv) {
             g_poison_val = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--watch") && i + 1 < argc && g_watch_n < 8)
             g_watch[g_watch_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
+        else if (!strcmp(argv[i], "--argtrace") && i + 1 < argc && g_at_n < 4)
+            g_at[g_at_n++] = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--firsthit") && i + 2 < argc) {
+            g_fh_lo = (uint32_t)strtoul(argv[++i], NULL, 0);
+            g_fh_hi = (uint32_t)strtoul(argv[++i], NULL, 0);
+            if (g_fh_hi > g_fh_lo)
+                g_fh_seen = (uint8_t*)calloc(((g_fh_hi - g_fh_lo) >> 5) + 1, 1);
+        }
         else if (!strcmp(argv[i], "--calltrace") && i + 1 < argc)
             g_calltrace = fopen(argv[++i], "w"),
-            /* unbuffered: a crash must not take the interesting tail with it */
-            g_calltrace ? setvbuf(g_calltrace, NULL, _IONBF, 0) : 0;
+            /* 4 MB of buffer: unbuffered made the trace slower than the code
+             * it was tracing (7.9 M calls a run). The fault handler and the
+             * exit path both flush, so the tail still survives a crash. */
+            g_calltrace ? setvbuf(g_calltrace, NULL, _IOFBF, 4u << 20) : 0;
         else if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--splash")) splash = 1;
         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {
