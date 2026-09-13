@@ -56,6 +56,7 @@ void mach_init(void);
 void mach_enter(void);
 void mach_leave(void);
 extern int g_shim_trace;
+extern unsigned g_wait_scale;
 uint32_t g_poison = 0;
 int g_poison_hit = 0;
 uint32_t g_poison_last = 0;
@@ -66,7 +67,10 @@ uint32_t g_watch[8];
 unsigned g_watch_n = 0;
 
 void recomp_trace_enter(uint32_t va) {
-    if (g_calltrace) fprintf(g_calltrace, "%08X\n", va);
+    /* Tagged with the thread, because the trace interleaves the game's own
+     * worker threads with the main one and a flat sequence cannot be read. */
+    if (g_calltrace) fprintf(g_calltrace, "%lu %08X\n",
+                             GetCurrentThreadId(), va);
     /* --poison ADDR reports the first moment a target dword turns into the
      * high half of a 64-bit host pointer (0x00007FFx). That only happens when a
      * shim stores a host pointer into target memory, and pairing it with
@@ -94,6 +98,26 @@ void recomp_trace_enter(uint32_t va) {
             for (int k = 0; k <= 0x20; k += 4)
                 fprintf(stderr, " %08X", MEM32(g_ecx + k));
             fprintf(stderr, "\n");
+        }
+        if (g_ecx >= 0x00200000u) {
+            fprintf(stderr, "[watch]   [ecx+88..A4]:");
+            for (int q = 0x88; q <= 0xA4; q += 4)
+                fprintf(stderr, " %08X", MEM32(g_ecx + q));
+            fprintf(stderr, "\n");
+        }
+        {   /* identify the object at +0x94 by its vptr */
+            uint32_t o = MEM32(g_ecx + 0x94);
+            fprintf(stderr, "[watch]   [ecx+0x94]=0x%08X vptr=0x%08X\n",
+                    o, o >= 0x00200000u ? MEM32(o) : 0);
+        }
+        {   /* the process array at [ecx+0xC], 16 slots */
+            uint32_t arr = MEM32(g_ecx + 0xC);
+            if (arr >= 0x00200000u) {
+                fprintf(stderr, "[watch]   procs@0x%08X:", arr);
+                for (int q = 0; q < 16; q++)
+                    fprintf(stderr, " %08X", MEM32(arr + q * 4));
+                fprintf(stderr, "\n");
+            }
         }
     }
 }
@@ -510,7 +534,9 @@ int main(int argc, char** argv) {
     int run = 0, splash = 0, shot = 0;
     const char* shot_path = NULL;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
+        if (!strcmp(argv[i], "--waitscale") && i + 1 < argc)
+            g_wait_scale = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc)
             g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;

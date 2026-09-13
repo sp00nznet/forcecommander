@@ -36,6 +36,8 @@
 /* --trace turns on the per-call shim log. Off by default: the config parse
  * alone prints a line per token, which buries the rare events that matter. */
 int g_shim_trace = 0;
+/* --waitscale N: stretch every finite Win32 wait. See k32_WaitForSingleObject. */
+unsigned g_wait_scale = 1;
 
 /* ------------------------------------------------------------- allocator */
 
@@ -380,7 +382,7 @@ static void crt_getmainargs(void) {
 }
 
 static void crt_exit(void) {
-    fprintf(stderr, "[crt] exit(%u) called by lifted code\n", ARG(0));
+    fprintf(stderr, "[crt] exit(%u) called by lifted 0x%08X\n", ARG(0), g_cur_func);
     recomp_dump_trace("exit");
     crt_heap_stats();
     exit((int)ARG(0));
@@ -402,6 +404,7 @@ static void crt_ftol(void)   { double a = fpeek(0); fpop(); RET((uint32_t)(int32
  * preemption, the switch points ARE the blocking calls. */
 void mach_enter(void);
 void mach_leave(void);
+void mach_yield(uint32_t sleep_ms);
 /*
  * Read every argument BEFORE this and write the result AFTER it. ARG(n) reads
  * the simulated stack through g_esp, and between mach_leave() and mach_enter()
@@ -747,12 +750,42 @@ static void k32_CreateEventA(void) {
     if (g_shim_trace) fprintf(stderr, "[k32] CreateEventA(manual=%u, set=%u, \"%s\") -> h=%u\n", ARG(1), ARG(2), nm ? nm : "", h2i(h));
     RET(h ? h2i(h) : 0); STDRET(4);
 }
-static void k32_SetEvent(void)   { HANDLE h = i2h(ARG(0)); RET(h ? (SetEvent(h) ? 1 : 0) : 0);   STDRET(1); }
-static void k32_ResetEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (ResetEvent(h) ? 1 : 0) : 0); STDRET(1); }
+static void k32_SetEvent(void) {
+    HANDLE h = i2h(ARG(0));
+    if (g_shim_trace)
+        fprintf(stderr, "[k32] SetEvent(h=%u) from 0x%08X\n", ARG(0), g_cur_func);
+    RET(h ? (SetEvent(h) ? 1 : 0) : 0); STDRET(1);
+}
+
+static void k32_ResetEvent(void) {
+    HANDLE h = i2h(ARG(0));
+    if (g_shim_trace)
+        fprintf(stderr, "[k32] ResetEvent(h=%u) from 0x%08X\n", ARG(0), g_cur_func);
+    RET(h ? (ResetEvent(h) ? 1 : 0) : 0); STDRET(1);
+}
 static void k32_PulseEvent(void) { HANDLE h = i2h(ARG(0)); RET(h ? (PulseEvent(h) ? 1 : 0) : 0); STDRET(1); }
 static void k32_WaitForSingleObject(void) {
     HANDLE h = i2h(ARG(0));
+    /*
+     * ponytail: wall-clock timeouts are stretched by g_wait_scale.
+     *
+     * Ronin's thread body is `WaitForSingleObject(ev, 100)` and it RETURNS on
+     * timeout -- the thread ends if it is not given work within 100 ms. That
+     * assumes real concurrency, and this machine runs one thread of lifted code
+     * at a time, so wall-clock time passes while a thread waits its turn for
+     * the machine. The mission process timed out and was reaped after one
+     * frame, which is why attaching a --calltrace "fixed" it.
+     *
+     * The honest fix is a virtual clock: GetTickCount and friends advancing
+     * with progress rather than with the wall. That is the next structural
+     * step; scaling the timeout is the measurement that says it is the right
+     * one.
+     */
     uint32_t r = 0xFFFFFFFFu, ms = ARG(1);      /* sampled before releasing */
+    if (ms != INFINITE) {
+        uint64_t scaled = (uint64_t)ms * g_wait_scale;
+        ms = scaled > 0x7FFFFFFFu ? 0x7FFFFFFFu : (uint32_t)scaled;
+    }
     if (h) BLOCKING(r = (uint32_t)WaitForSingleObject(h, ms));
     static unsigned n;
     if (g_shim_trace && n++ < 12)
@@ -1201,8 +1234,25 @@ static void k32_GetVolumeInformationA(void) {
 static void k32_GetTickCount(void)     { RET((uint32_t)GetTickCount()); STDRET(0); }
 static void k32_GetLastError(void)     { RET((uint32_t)GetLastError()); STDRET(0); }
 static void k32_Sleep(void) {
+    /*
+     * Sleep(0) has to be a real handoff, not just a released lock.
+     *
+     * The game's loading loop calls Sleep(0) once per iteration and the mission
+     * process runs on another thread. A CRITICAL_SECTION makes no fairness
+     * promise, so the main thread released it, Sleep(0) returned without the
+     * waiting thread having been scheduled, and the main thread took it
+     * straight back. The mission thread starved, the manager reaped it as
+     * finished, and the game exited cleanly having run exactly one frame --
+     * and it went away when a --calltrace was attached, which is the signature
+     * of a scheduling race rather than a logic bug.
+     *
+     * SwitchToThread yields to a ready thread on this processor, which is
+     * precisely what Sleep(0) is asking for, and it returns FALSE if there was
+     * nobody to yield to -- so fall back to a 1 ms sleep to guarantee the
+     * handoff.
+     */
     uint32_t ms = ARG(0);                       /* sampled before releasing */
-    BLOCKING(Sleep(ms));
+    mach_yield(ms);
     RET(0); STDRET(1);
 }
 /*

@@ -29,6 +29,7 @@ extern int g_shim_trace;   /* --trace */
  * here because the blocking USER32 shims come first in this file. */
 void mach_enter(void);
 void mach_leave(void);
+void mach_yield(uint32_t sleep_ms);
 int  mach_depth(void);
 #define BLOCKING(expr) do { mach_leave(); (expr); mach_enter(); } while (0)
 
@@ -774,6 +775,7 @@ typedef struct {
 } mstate;
 
 static CRITICAL_SECTION g_mach;
+static volatile long    g_mach_waiters;   /* threads blocked in mach_enter */
 static DWORD  g_mach_tls = TLS_OUT_OF_INDEXES;
 static long   g_mach_threads;            /* how many simulated stacks handed out */
 int           g_no_threads;              /* --nothreads: the old behaviour */
@@ -814,7 +816,9 @@ int mach_depth(void) {
 
 void mach_enter(void) {
     if (g_mach_tls == TLS_OUT_OF_INDEXES) return;
+    InterlockedIncrement(&g_mach_waiters);
     EnterCriticalSection(&g_mach);
+    InterlockedDecrement(&g_mach_waiters);
     mstate* m = (mstate*)TlsGetValue(g_mach_tls);
     if (!m) {
         /* First claim by this thread -- the main one, whose state is whatever
@@ -839,6 +843,31 @@ void mach_leave(void) {
     LeaveCriticalSection(&g_mach);
 }
 
+/*
+ * Hand the machine over, then take it back.
+ *
+ * Releasing the lock is not enough. A CRITICAL_SECTION makes no fairness
+ * promise, so a thread that leaves and immediately re-enters can win it back
+ * before the thread already blocked on it is even scheduled. The game's loading
+ * loop calls Sleep(0) once per iteration while the mission process runs on
+ * another thread, and that thread starved: the manager reaped it as finished
+ * and the game exited having run one frame. Attaching a --calltrace made it go
+ * away, which is the signature of a scheduling race.
+ *
+ * So if anyone was waiting, spin (yielding) until the waiter count drops --
+ * proof that one of them got in -- before asking for it back. Bounded, because
+ * a waiter that dies or never runs must not hang the yielder.
+ */
+void mach_yield(uint32_t sleep_ms) {
+    long before = g_mach_waiters;
+    mach_leave();
+    if (sleep_ms) Sleep(sleep_ms);
+    for (int spin = 0; before > 0 && g_mach_waiters >= before && spin < 200; spin++)
+        if (!SwitchToThread()) Sleep(1);
+    mach_enter();
+}
+
+
 typedef struct {
     recomp_func_t fn;
     uint32_t      param;
@@ -861,6 +890,7 @@ static DWORD WINAPI lifted_thread(LPVOID p) {
     PUSH32(g_esp, RECOMP_RETADDR);
     a->fn();
     uint32_t rc = g_eax;
+    fprintf(stderr, "[k32] thread %lu routine RETURNED (rc=%u)\n", GetCurrentThreadId(), rc);
     mach_leave();
 
     free(m);

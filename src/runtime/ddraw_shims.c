@@ -1273,8 +1273,8 @@ static void d3d_EnumDevices(void) {
     strcpy((char*)(uintptr_t)ADDR(name), "RGB Emulation");
     memcpy((void*)(uintptr_t)ADDR(dd), &d, sizeof d);
 
-    fprintf(stderr, "[d3d] EnumDevices -> RGB Emulation (desc %u bytes at 0x%08X)\n",
-            (unsigned)sizeof d, dd);
+    fprintf(stderr, "[d3d] EnumDevices callback=0x%08X -> RGB Emulation (desc %u bytes at 0x%08X)\n",
+            cb, (unsigned)sizeof d, dd);
 
     /* stdcall, pushed right to left, then the dummy return address the
      * callback's own `ret` will pop. D3DENUMRET_OK means "keep going". */
