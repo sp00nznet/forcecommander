@@ -852,8 +852,8 @@
   "name": "??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@",
   "real": "??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C31BC": {
   "dll": "MSVCP60.dll",
@@ -908,8 +908,8 @@
   "name": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@",
   "real": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C31D8": {
   "dll": "MSVCP60.dll",
@@ -948,8 +948,8 @@
   "name": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@",
   "real": "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C31EC": {
   "dll": "MSVCP60.dll",
@@ -972,8 +972,8 @@
   "name": "??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@",
   "real": "??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C31F8": {
   "dll": "MSVCP60.dll",
@@ -996,8 +996,8 @@
   "name": "??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@",
   "real": "??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C3204": {
   "dll": "MSVCP60.dll",
@@ -1140,8 +1140,8 @@
   "name": "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB",
   "real": "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C324C": {
   "dll": "MSVCP60.dll",
@@ -1188,8 +1188,8 @@
   "name": "?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB",
   "real": "?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB",
   "argc": 0,
-  "conv": "cdecl",
-  "src": "crt-undecorated-export"
+  "conv": "data",
+  "src": "mangled-data-symbol"
  },
  "0x007C3264": {
   "dll": "MSVCP60.dll",

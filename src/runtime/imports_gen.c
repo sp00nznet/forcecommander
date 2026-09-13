@@ -218,8 +218,8 @@ static void imp_MSVCP60____Split___basic_string_DU__char_traits_D_std__V__alloca
 static void imp_MSVCP60___setstate___basic_ios_DU__char_traits_D_std___std__QAEXH_N_Z(void) { IMPORT_STUB("?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z"); RET(0); STDRET(2); }
 /* MSVCP60.dll!??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z  (cdecl, 0 slots, mangled-convention) */
 static void imp_MSVCP60____6std__YAAAV__basic_ostream_DU__char_traits_D_std___0_AAV10_ABV__basic_string_DU__char_traits_D_std__V__allocator_D_2__0__Z(void) { IMPORT_STUB("??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z"); RET(0); CDECLRET(); }
-/* MSVCP60.dll!??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60_____7__basic_filebuf_DU__char_traits_D_std___std__6B_(void) { IMPORT_STUB("??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@ is a DATA import (never called) */
+static void imp_MSVCP60_____7__basic_filebuf_DU__char_traits_D_std___std__6B_(void) { IMPORT_REFUSED("MSVCP60.dll!??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@", "data"); }
 /* MSVCP60.dll!?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ  (thiscall, 0 slots, hand-written) */
 static void imp_MSVCP60___close___basic_filebuf_DU__char_traits_D_std___std__QAEPAV12_XZ(void) { IMPORT_STUB("?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ"); RET(0); STDRET(0); }
 /* MSVCP60.dll!??1locale@std@@QAE@XZ  (thiscall, 0 slots, hand-written) */
@@ -232,8 +232,8 @@ static void imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__alloca
 static void imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_PBDI_Z(void) { IMPORT_STUB("?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z"); RET(0); STDRET(2); }
 /* MSVCP60.dll!?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z  (thiscall, 3 slots, hand-written) */
 static void imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_ABV12_II_Z(void) { IMPORT_STUB("?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z"); RET(0); STDRET(3); }
-/* MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_istream_DU__char_traits_D_std___1__(void) { IMPORT_STUB("??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@ is a DATA import (never called) */
+static void imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_istream_DU__char_traits_D_std___1__(void) { IMPORT_REFUSED("MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@", "data"); }
 /* MSVCP60.dll!?length@?$char_traits@D@std@@SAIPBD@Z  (cdecl, 0 slots, mangled-convention) */
 static void imp_MSVCP60___length___char_traits_D_std__SAIPBD_Z(void) { IMPORT_STUB("?length@?$char_traits@D@std@@SAIPBD@Z"); RET(0); CDECLRET(); }
 /* MSVCP60.dll!?_Xlen@std@@YAXXZ  (cdecl, 0 slots, mangled-convention) */
@@ -242,20 +242,20 @@ static void imp_MSVCP60____Xlen_std__YAXXZ(void) { IMPORT_STUB("?_Xlen@std@@YAXX
 static void imp_MSVCP60____4__basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV01_PBD_Z(void) { IMPORT_STUB("??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z"); RET(0); STDRET(1); }
 /* MSVCP60.dll!?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z  (thiscall, 1 slots, hand-written) */
 static void imp_MSVCP60___assign___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_PBD_Z(void) { IMPORT_STUB("?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z"); RET(0); STDRET(1); }
-/* MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_ostream_DU__char_traits_D_std___1__(void) { IMPORT_STUB("??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@ is a DATA import (never called) */
+static void imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_ostream_DU__char_traits_D_std___1__(void) { IMPORT_REFUSED("MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@", "data"); }
 /* MSVCP60.dll!??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z  (thiscall, 1 slots, hand-written) */
 static void imp_MSVCP60____0__basic_iostream_DU__char_traits_D_std___std__QAE_PAV__basic_streambuf_DU__char_traits_D_std___1__Z(void) { IMPORT_STUB("??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z"); RET(0); STDRET(1); }
 /* MSVCP60.dll!??0ios_base@std@@IAE@XZ  (thiscall, 0 slots, hand-written) */
 static void imp_MSVCP60____0ios_base_std__IAE_XZ(void) { IMPORT_STUB("??0ios_base@std@@IAE@XZ"); RET(0); STDRET(0); }
-/* MSVCP60.dll!??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60_____7__basic_ios_DU__char_traits_D_std___std__6B_(void) { IMPORT_STUB("??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@ is a DATA import (never called) */
+static void imp_MSVCP60_____7__basic_ios_DU__char_traits_D_std___std__6B_(void) { IMPORT_REFUSED("MSVCP60.dll!??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@", "data"); }
 /* MSVCP60.dll!?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z  (thiscall, 2 slots, hand-written) */
 static void imp_MSVCP60___open___basic_filebuf_DU__char_traits_D_std___std__QAEPAV12_PBDH_Z(void) { IMPORT_STUB("?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z"); RET(0); STDRET(2); }
 /* MSVCP60.dll!??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z  (thiscall, 1 slots, hand-written) */
 static void imp_MSVCP60____0__basic_filebuf_DU__char_traits_D_std___std__QAE_PAU_iobuf___Z(void) { IMPORT_STUB("??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z"); RET(0); STDRET(1); }
-/* MSVCP60.dll!??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60_____7__basic_fstream_DU__char_traits_D_std___std__6B_(void) { IMPORT_STUB("??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@ is a DATA import (never called) */
+static void imp_MSVCP60_____7__basic_fstream_DU__char_traits_D_std___std__6B_(void) { IMPORT_REFUSED("MSVCP60.dll!??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@", "data"); }
 /* MSVCP60.dll!??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ  (thiscall, 0 slots, hand-written) */
 static void imp_MSVCP60____1__basic_iostream_DU__char_traits_D_std___std__UAE_XZ(void) { IMPORT_STUB("??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ"); RET(0); STDRET(0); }
 /* MSVCP60.dll!?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z  (thiscall, 2 slots, hand-written) */
@@ -290,8 +290,8 @@ static void imp_MSVCP60___assign___char_traits_D_std__SAXAADABD_Z(void) { IMPORT
 static void imp_MSVCP60____Mstd__YA_NABV__basic_string_DU__char_traits_D_std__V__allocator_D_2__0_0_Z(void) { IMPORT_STUB("??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z"); RET(0); CDECLRET(); }
 /* MSVCP60.dll!??1_Lockit@std@@QAE@XZ  (thiscall, 0 slots, hand-written) */
 static void imp_MSVCP60____1_Lockit_std__QAE_XZ(void) { IMPORT_STUB("??1_Lockit@std@@QAE@XZ"); RET(0); STDRET(0); }
-/* MSVCP60.dll!?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60___npos___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__2IB(void) { IMPORT_STUB("?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB is a DATA import (never called) */
+static void imp_MSVCP60___npos___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__2IB(void) { IMPORT_REFUSED("MSVCP60.dll!?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB", "data"); }
 /* MSVCP60.dll!?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z  (thiscall, 2 slots, hand-written) */
 static void imp_MSVCP60___erase___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_II_Z(void) { IMPORT_STUB("?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z"); RET(0); STDRET(2); }
 /* MSVCP60.dll!?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z  (thiscall, 2 slots, hand-written) */
@@ -302,8 +302,8 @@ static void imp_MSVCP60____Eos___basic_string_DU__char_traits_D_std__V__allocato
 static void imp_MSVCP60___assign___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_ABV12_II_Z(void) { IMPORT_STUB("?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z"); RET(0); STDRET(3); }
 /* MSVCP60.dll!??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ  (thiscall, 0 slots, hand-written) */
 static void imp_MSVCP60____1__basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAE_XZ(void) { IMPORT_STUB("??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ"); RET(0); STDRET(0); }
-/* MSVCP60.dll!?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB  (cdecl, 0 slots, crt-undecorated-export) */
-static void imp_MSVCP60____C__1___Nullstr___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__CAPBDXZ_4DB(void) { IMPORT_STUB("?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB"); RET(0); CDECLRET(); }
+/* MSVCP60.dll!?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB is a DATA import (never called) */
+static void imp_MSVCP60____C__1___Nullstr___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__CAPBDXZ_4DB(void) { IMPORT_REFUSED("MSVCP60.dll!?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB", "data"); }
 /* MSVCP60.dll!?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z  (thiscall, 1 slots, hand-written) */
 static void imp_MSVCP60____Tidy___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__AAEX_N_Z(void) { IMPORT_STUB("?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z"); RET(0); STDRET(1); }
 /* MSVCP60.dll!?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z  (thiscall, 2 slots, hand-written) */
@@ -728,25 +728,25 @@ const import_entry_t g_imports[] = {
     { 0x007C31ACu, imp_MSVCP60____Split___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__AAEXXZ, "MSVCP60.dll!?_Split@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXXZ", "thiscall" },
     { 0x007C31B0u, imp_MSVCP60___setstate___basic_ios_DU__char_traits_D_std___std__QAEXH_N_Z, "MSVCP60.dll!?setstate@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z", "thiscall" },
     { 0x007C31B4u, imp_MSVCP60____6std__YAAAV__basic_ostream_DU__char_traits_D_std___0_AAV10_ABV__basic_string_DU__char_traits_D_std__V__allocator_D_2__0__Z, "MSVCP60.dll!??6std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@@Z", "cdecl" },
-    { 0x007C31B8u, imp_MSVCP60_____7__basic_filebuf_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@", "cdecl" },
+    { 0x007C31B8u, imp_MSVCP60_____7__basic_filebuf_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_filebuf@DU?$char_traits@D@std@@@std@@6B@", "data" },
     { 0x007C31BCu, imp_MSVCP60___close___basic_filebuf_DU__char_traits_D_std___std__QAEPAV12_XZ, "MSVCP60.dll!?close@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@XZ", "thiscall" },
     { 0x007C31C0u, imp_MSVCP60____1locale_std__QAE_XZ, "MSVCP60.dll!??1locale@std@@QAE@XZ", "thiscall" },
     { 0x007C31C4u, imp_MSVCP60____1__basic_streambuf_DU__char_traits_D_std___std__UAE_XZ, "MSVCP60.dll!??1?$basic_streambuf@DU?$char_traits@D@std@@@std@@UAE@XZ", "thiscall" },
     { 0x007C31C8u, imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_ID_Z, "MSVCP60.dll!?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ID@Z", "thiscall" },
     { 0x007C31CCu, imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_PBDI_Z, "MSVCP60.dll!?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z", "thiscall" },
     { 0x007C31D0u, imp_MSVCP60___append___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_ABV12_II_Z, "MSVCP60.dll!?append@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z", "thiscall" },
-    { 0x007C31D4u, imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_istream_DU__char_traits_D_std___1__, "MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@", "cdecl" },
+    { 0x007C31D4u, imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_istream_DU__char_traits_D_std___1__, "MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@", "data" },
     { 0x007C31D8u, imp_MSVCP60___length___char_traits_D_std__SAIPBD_Z, "MSVCP60.dll!?length@?$char_traits@D@std@@SAIPBD@Z", "cdecl" },
     { 0x007C31DCu, imp_MSVCP60____Xlen_std__YAXXZ, "MSVCP60.dll!?_Xlen@std@@YAXXZ", "cdecl" },
     { 0x007C31E0u, imp_MSVCP60____4__basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV01_PBD_Z, "MSVCP60.dll!??4?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV01@PBD@Z", "thiscall" },
     { 0x007C31E4u, imp_MSVCP60___assign___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_PBD_Z, "MSVCP60.dll!?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBD@Z", "thiscall" },
-    { 0x007C31E8u, imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_ostream_DU__char_traits_D_std___1__, "MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@", "cdecl" },
+    { 0x007C31E8u, imp_MSVCP60_____8__basic_fstream_DU__char_traits_D_std___std__7B__basic_ostream_DU__char_traits_D_std___1__, "MSVCP60.dll!??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@", "data" },
     { 0x007C31ECu, imp_MSVCP60____0__basic_iostream_DU__char_traits_D_std___std__QAE_PAV__basic_streambuf_DU__char_traits_D_std___1__Z, "MSVCP60.dll!??0?$basic_iostream@DU?$char_traits@D@std@@@std@@QAE@PAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z", "thiscall" },
     { 0x007C31F0u, imp_MSVCP60____0ios_base_std__IAE_XZ, "MSVCP60.dll!??0ios_base@std@@IAE@XZ", "thiscall" },
-    { 0x007C31F4u, imp_MSVCP60_____7__basic_ios_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@", "cdecl" },
+    { 0x007C31F4u, imp_MSVCP60_____7__basic_ios_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_ios@DU?$char_traits@D@std@@@std@@6B@", "data" },
     { 0x007C31F8u, imp_MSVCP60___open___basic_filebuf_DU__char_traits_D_std___std__QAEPAV12_PBDH_Z, "MSVCP60.dll!?open@?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAEPAV12@PBDH@Z", "thiscall" },
     { 0x007C31FCu, imp_MSVCP60____0__basic_filebuf_DU__char_traits_D_std___std__QAE_PAU_iobuf___Z, "MSVCP60.dll!??0?$basic_filebuf@DU?$char_traits@D@std@@@std@@QAE@PAU_iobuf@@@Z", "thiscall" },
-    { 0x007C3200u, imp_MSVCP60_____7__basic_fstream_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@", "cdecl" },
+    { 0x007C3200u, imp_MSVCP60_____7__basic_fstream_DU__char_traits_D_std___std__6B_, "MSVCP60.dll!??_7?$basic_fstream@DU?$char_traits@D@std@@@std@@6B@", "data" },
     { 0x007C3204u, imp_MSVCP60____1__basic_iostream_DU__char_traits_D_std___std__UAE_XZ, "MSVCP60.dll!??1?$basic_iostream@DU?$char_traits@D@std@@@std@@UAE@XZ", "thiscall" },
     { 0x007C3208u, imp_MSVCP60___clear___basic_ios_DU__char_traits_D_std___std__QAEXH_N_Z, "MSVCP60.dll!?clear@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXH_N@Z", "thiscall" },
     { 0x007C320Cu, imp_MSVCP60____1__basic_filebuf_DU__char_traits_D_std___std__UAE_XZ, "MSVCP60.dll!??1?$basic_filebuf@DU?$char_traits@D@std@@@std@@UAE@XZ", "thiscall" },
@@ -764,13 +764,13 @@ const import_entry_t g_imports[] = {
     { 0x007C323Cu, imp_MSVCP60___assign___char_traits_D_std__SAXAADABD_Z, "MSVCP60.dll!?assign@?$char_traits@D@std@@SAXAADABD@Z", "cdecl" },
     { 0x007C3240u, imp_MSVCP60____Mstd__YA_NABV__basic_string_DU__char_traits_D_std__V__allocator_D_2__0_0_Z, "MSVCP60.dll!??Mstd@@YA_NABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@0@Z", "cdecl" },
     { 0x007C3244u, imp_MSVCP60____1_Lockit_std__QAE_XZ, "MSVCP60.dll!??1_Lockit@std@@QAE@XZ", "thiscall" },
-    { 0x007C3248u, imp_MSVCP60___npos___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__2IB, "MSVCP60.dll!?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB", "cdecl" },
+    { 0x007C3248u, imp_MSVCP60___npos___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__2IB, "MSVCP60.dll!?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB", "data" },
     { 0x007C324Cu, imp_MSVCP60___erase___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_II_Z, "MSVCP60.dll!?erase@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@II@Z", "thiscall" },
     { 0x007C3250u, imp_MSVCP60____Grow___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__AAE_NI_N_Z, "MSVCP60.dll!?_Grow@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAE_NI_N@Z", "thiscall" },
     { 0x007C3254u, imp_MSVCP60____Eos___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__AAEXI_Z, "MSVCP60.dll!?_Eos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEXI@Z", "thiscall" },
     { 0x007C3258u, imp_MSVCP60___assign___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_ABV12_II_Z, "MSVCP60.dll!?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@ABV12@II@Z", "thiscall" },
     { 0x007C325Cu, imp_MSVCP60____1__basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAE_XZ, "MSVCP60.dll!??1?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@XZ", "thiscall" },
-    { 0x007C3260u, imp_MSVCP60____C__1___Nullstr___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__CAPBDXZ_4DB, "MSVCP60.dll!?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB", "cdecl" },
+    { 0x007C3260u, imp_MSVCP60____C__1___Nullstr___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__CAPBDXZ_4DB, "MSVCP60.dll!?_C@?1??_Nullstr@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@CAPBDXZ@4DB", "data" },
     { 0x007C3264u, imp_MSVCP60____Tidy___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__AAEX_N_Z, "MSVCP60.dll!?_Tidy@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@AAEX_N@Z", "thiscall" },
     { 0x007C3268u, imp_MSVCP60___assign___basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAEAAV12_PBDI_Z, "MSVCP60.dll!?assign@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@PBDI@Z", "thiscall" },
     { 0x007C326Cu, imp_MSVCP60____0__basic_string_DU__char_traits_D_std__V__allocator_D_2__std__QAE_ABV__allocator_D_1__Z, "MSVCP60.dll!??0?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAE@ABV?$allocator@D@1@@Z", "thiscall" },

@@ -87,6 +87,8 @@ def main():
                     help='closure size cap (default 2000)')
     ap.add_argument('--all', action='store_true', help='lift every function')
     ap.add_argument('--split', type=int, default=400)
+    ap.add_argument('--seeds', default='',
+                    help='seed_from_log.py JSON: addresses a RUN discovered')
     args = ap.parse_args()
 
     if not os.path.exists(args.catalog):
@@ -101,6 +103,27 @@ def main():
     cat = json.load(open(args.catalog))
     funcs = [f for f in cat['functions'] if cs <= f['address'] < ce]
     byaddr = {f['address']: f for f in funcs}
+
+    # Addresses a *run* found that static analysis did not: jump-table arms and
+    # indirect-call targets, harvested by disasm/seed_from_log.py from the
+    # runtime's own "ICALL/ITAIL: unresolved VA" lines.
+    #
+    # Injected as catalog entries here rather than fed back through disasm32,
+    # because re-disassembling 3.9 MB takes 40 minutes and this is an iterative
+    # loop -- run, harvest, lift, run. A seed only needs an entry and a bound to
+    # be liftable and dispatchable; it does not need the whole catalog rebuilt.
+    # Feed them to disasm32 --seed-functions when the catalog is next rebuilt
+    # for real, so its own recovery improves too.
+    seeded = 0
+    if args.seeds and os.path.exists(args.seeds):
+        for e in json.load(open(args.seeds)):
+            a = e['address']
+            if cs <= a < ce and a not in byaddr:
+                byaddr[a] = {'address': a, 'end': ce, 'name': 'sub_%08X' % a,
+                             'size': 0, 'calls_to': [], 'is_thunk': False,
+                             'entry_kind': 'start', 'num_instructions': 0}
+                seeded += 1
+        print('[*] seeds from a run: %d injected' % seeded)
     print('[*] catalog: %d functions (%.1f%% byte coverage)'
           % (len(funcs), cat.get('stats', {}).get('coverage_pct', 0)))
 
@@ -159,7 +182,7 @@ def main():
     next_start = {a: (ordered[i + 1] if i + 1 < len(ordered) else ce)
                   for i, a in enumerate(ordered)}
 
-    clamped = 0
+    clamped = extended = 0
     for addr in sorted(chosen_set):
         f = byaddr[addr]
         name = 'sub_%08X' % addr
@@ -177,6 +200,39 @@ def main():
             continue
         try:
             insns, leaders = linear_disassemble_function(md, code, cs, addr, end)
+
+            # Grow the body to contain its own direct branch targets.
+            #
+            # The clamp cuts a function in half wherever the catalog invented an
+            # entry inside it -- a "split", in score_recovery.py's terms. Then a
+            # `jcc` forward past the cut has no label to jump to, generate.py's
+            # undefined-label fallback turns it into a global tail call, and the
+            # arm runs without the frame its function set up.
+            #
+            # sub_00401AB0 is the worked example: `jne 0x401B13` at 0x00401AF8,
+            # a false entry at 0x00401B00, and the arm executed with
+            # ebp = 0x0000000F and faulted. Seeding 0x401B13 as its own function
+            # made it dispatchable and no better -- a branch target is not a
+            # function, and calling it as one is still the wrong frame.
+            #
+            # One pass, and capped hard at 2 KB past the clamp.
+            #
+            # Iterating and taking max(target) over the whole body looked more
+            # thorough and was worse: a branch target decoded out of *data* past
+            # the real function end drags `end` after it, the next pass decodes
+            # more data as code, and it compounds. That version reached the
+            # static constructors and faulted inside one, having previously got
+            # all the way through 358 of them.
+            #
+            # A split that a `jcc` jumps over is small -- sub_00401AB0's is 0x13
+            # bytes -- so covering the nearest dangling target and stopping is
+            # both sufficient and self-limiting.
+            targets = [t for t in (i.get_branch_target() for i in insns)
+                       if t is not None and end <= t < min(f['end'], ce, end + 0x800)]
+            if targets:
+                end = min(min(targets) + 16, addr + 0x800, ce)
+                insns, leaders = linear_disassemble_function(md, code, cs, addr, end)
+                extended += 1
             if not insns:
                 chunk.append(('void %s(void) { }\n' % name, addr, name))
             else:
@@ -243,7 +299,8 @@ def main():
               open(os.path.join(_HERE, 'analysis', 'phase3_codegen.json'), 'w'),
               indent=1)
     print('=' * 60)
-    print('  ends clamped to the next entry: %d' % clamped)
+    print('  ends clamped to the next entry: %d  (extended for a '
+          'computed jump: %d)' % (clamped, extended))
     print('  lifted %d   not-lifted stubs %d   errors %d   files %d'
           % (len(chosen_set), len(stubs), errors, idx))
     print('  %s lines of C, %.1f MB, %.1fs'

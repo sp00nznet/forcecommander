@@ -21,6 +21,7 @@
 #include "image_loader.h"
 
 uint32_t crt_alloc(uint32_t n);   /* crt_shims.c */
+void stl_init_data_imports(void);  /* stl_shims.c */
 
 /* ---------------------------------------------------------------- machine */
 
@@ -375,18 +376,18 @@ int main(int argc, char** argv) {
      * which is non-zero -- and non-zero means "this CPU has the Pentium FDIV
      * bug", which routes every floating-point divide through MSVC's software
      * workaround. Fury3 hit the same flag from the other direction and its
-     * note is blunt about the result: NaN across all FP math. So point data
-     * slots at a zeroed cell instead.
+     * note is blunt about the result: NaN across all FP math.
+     *
+     * Several need a specific value rather than merely a non-self-referential
+     * one, which is why stl_shims.c owns this: std::basic_string::npos must
+     * read 0xFFFFFFFF, and _Nullstr must be a real NUL byte, because it is what
+     * an empty string's _Ptr points at.
      */
-    uint32_t zero_cell = crt_alloc(64);
     unsigned ndata = 0;
-    for (unsigned i = 0; i < g_import_count; i++) {
-        if (g_imports[i].conv && !strcmp(g_imports[i].conv, "data")) {
-            MEM32(g_imports[i].iat_va) = zero_cell;
-            ndata++;
-        }
-    }
-    if (ndata) printf("  data imports -> zero cell:    %u\n", ndata);
+    for (unsigned i = 0; i < g_import_count; i++)
+        if (g_imports[i].conv && !strcmp(g_imports[i].conv, "data")) ndata++;
+    printf("  data imports:                 %u\n", ndata);
+    stl_init_data_imports();
 
     /*
      * A simulated TIB. The very first thing the CRT entry does is
