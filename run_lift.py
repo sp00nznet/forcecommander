@@ -79,14 +79,27 @@ def true_extent(md, code, cs, ce, start, hard_end, entries):
     intra-function branch, and following it walks straight into the next
     function -- which is how the first version of this produced 839 MB of C with
     9,054 bodies "spanning a false entry".
+
+    It must hold only the catalog's 'start' entries, never its 4,234 'alias'
+    ones. An alias is a second entry into a body that already exists, so a `jmp`
+    to one is an ordinary intra-function branch; refusing to follow it stops the
+    descent early. sub_00554A00 lost everything past its `jmp 0x554a7a` that
+    way, and the arm at 0x554AC2 -- reachable only through it -- became an
+    unresolved ITAIL at runtime.
     """
+    # The window has to reach hard_end, not a fixed number of bytes. A 512-byte
+    # slice silently truncated every body with a straight run longer than that
+    # -- WinMain (0x004010B0, 1175 bytes) lost everything past 0x004012AE, so it
+    # fell off the end of its own C function and "returned" to the CRT, which
+    # then stored the result through a clobbered ebp and faulted.
+    view = memoryview(code)
     seen, work, top = set(), [start], start
     while work:
         va = work.pop()
         if va in seen or not (start <= va < hard_end):
             continue
         off = va - cs
-        for ins in md.disasm(code[off:off + 512], va):
+        for ins in md.disasm(view[off:hard_end - cs], va):
             if ins.address in seen:
                 break
             seen.add(ins.address)
@@ -230,7 +243,8 @@ def main():
     # answer, and a split cannot truncate one because the branch over it is
     # followed.
     ordered = sorted(byaddr)
-    entry_set = set(ordered)
+    entry_set = set(a for a in ordered
+                    if byaddr[a].get('entry_kind') != 'alias')
     next_start = {a: (ordered[i + 1] if i + 1 < len(ordered) else ce)
                   for i, a in enumerate(ordered)}
 
