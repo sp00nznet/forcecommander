@@ -95,15 +95,43 @@ outside 32 bits altogether.
 
 ## Recommendation
 
-Try the 32-bit host before writing 58 STL shims. The experiment is cheap: build
-the existing host with `-m32` and a host base of 0x30000000, and see whether the
-splash still renders. If it does, the whole MSVCRT/MSVCP60 problem collapses
-into `LoadLibrary` + `GetProcAddress`, and the handle tables and struct
-marshalling go with it.
+Try the 32-bit host before writing 58 STL shims. If it works the whole
+MSVCRT/MSVCP60 problem collapses into `LoadLibrary` + `GetProcAddress`, and the
+handle tables and struct marshalling go with it. If it does not, the 58 shims
+are still there to write and nothing is lost.
 
-If it does not, the 58 shims are still there to write, and nothing is lost but
-an afternoon.
+### Which compiler
 
-**Status: not tried.** The splash screen renders on the 64-bit host, and the
-function catalog -- needed before any wider closure can be lifted -- is still
-being built.
+Checked, because this decides whether the experiment is cheap:
+
+| | |
+|---|---|
+| `mingw64` + `-m32` | **no.** Exits 1 with no output -- the 32-bit runtime is not installed, and `/c/msys64/mingw32/bin` has no gcc in it. |
+| MSVC x86 cross | **yes.** `VC/Tools/MSVC/14.44.35207/bin/Hostx64/x86/cl.exe` is present. |
+
+So the pivot means switching the host from gcc to `cl` as well as from 64- to
+32-bit, which is a bigger step than a flag. The `CMakeLists.txt` already carries
+an MSVC branch with the right warning suppressions, and `/BASE` replaces the
+`-Wl,--image-base` used for the 64-bit host -- but 2.5 million lines of
+generated C have only ever been through gcc, and MSVC's tolerance for a single
+1.2 MB function-dense translation unit is unmeasured.
+
+Budget it as a day, not an afternoon, and measure the compile on one chunk
+before converting the build.
+
+## Where it actually stops today
+
+The whole binary is lifted (38,908 functions) and runs into the game's own
+startup: the CRT entry completes, `_initterm` runs **358 static constructors**,
+`CoInitialize`, `QueryPerformanceFrequency`, `GetVersionExA` and
+`GetStartupInfoA` all go through, and hundreds of lifted functions execute.
+
+Then it faults in `sub_0053DDC0`, and the reason is this document: every one of
+the 58 STL entry points now has a correct purge count and a **stub body**, so
+the stack stays balanced and every `basic_string` is uninitialised garbage. The
+trace before the fault is exactly what that predicts --
+`basic_string(const char*, const allocator&)`, `assign`, `_Grow`, `_Copy`,
+`find`, `find_last_of`, `_Xlen` -- and then a dereference of a string that was
+never constructed.
+
+That is the gate, reached and confirmed rather than reasoned about.
