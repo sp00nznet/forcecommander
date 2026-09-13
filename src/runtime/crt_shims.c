@@ -442,13 +442,13 @@ static void ole_CoUninitialize(void) { RET(0); STDRET(0); }
  */
 #define REGDB_E_CLASSNOTREG 0x80040154u
 
+uint32_t ddraw_cocreate(uint32_t clsid_first_dword);   /* ddraw_shims.c */
+
 static void ole_CoCreateInstance(void) {
-    uint32_t ppv = ARG(4);
-    uint32_t clsid = ARG(0);
-    if (ppv) MEM32(ppv) = 0;
-    fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> "
-                    "REGDB_E_CLASSNOTREG\n", clsid ? MEM32(clsid) : 0);
-    RET(REGDB_E_CLASSNOTREG); STDRET(5);
+    uint32_t clsid = ARG(0), ppv = ARG(4);
+    uint32_t o = ddraw_cocreate(clsid ? MEM32(clsid) : 0);
+    if (ppv) MEM32(ppv) = o;
+    RET(o ? 0 : REGDB_E_CLASSNOTREG); STDRET(5);
 }
 
 /* Critical sections: the game is single-threaded through startup, and a real
@@ -486,9 +486,18 @@ static void k32_LoadLibraryA(void) {
 }
 
 uint32_t ddraw_proc(const char* name);      /* ddraw_shims.c */
+uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name);
+static void u32_GetMonitorInfoA(void);
 
 static void k32_GetProcAddress(void) {
     const char* n = ARG(1) ? (const char*)(uintptr_t)ADDR(ARG(1)) : "(ordinal)";
+    if (!strcmp(n, "GetMonitorInfoA") || !strcmp(n, "GetMonitorInfoW")) {
+        uint32_t mi = ddraw_register_host_proc(u32_GetMonitorInfoA,
+                                               "GetMonitorInfoA");
+        fprintf(stderr, "[dll] GetProcAddress(\"%s\") -> 0x%08X\n", n, mi);
+        RET(mi); STDRET(2);
+        return;
+    }
     uint32_t va = ddraw_proc(n);
     if (va) {
         fprintf(stderr, "[dll] GetProcAddress(\"%s\") -> 0x%08X\n", n, va);
@@ -500,6 +509,28 @@ static void k32_GetProcAddress(void) {
 }
 
 static void k32_FreeLibrary(void) { RET(1); STDRET(1); }
+
+/* GetMonitorInfoA: the multi-monitor path asks for this by name because it did
+ * not exist before Windows 98. MONITORINFO is cbSize, rcMonitor, rcWork,
+ * dwFlags -- 40 bytes, and the caller sets cbSize before the call. */
+int host_width(void);
+int host_height(void);
+
+static void u32_GetMonitorInfoA(void) {
+    uint32_t p = ARG(1);
+    if (p) {
+        MEM32(p + 0x04) = 0;                       /* rcMonitor.left   */
+        MEM32(p + 0x08) = 0;                       /* rcMonitor.top    */
+        MEM32(p + 0x0C) = (uint32_t)GetSystemMetrics(SM_CXSCREEN);
+        MEM32(p + 0x10) = (uint32_t)GetSystemMetrics(SM_CYSCREEN);
+        MEM32(p + 0x14) = 0;                       /* rcWork.left      */
+        MEM32(p + 0x18) = 0;
+        MEM32(p + 0x1C) = (uint32_t)GetSystemMetrics(SM_CXSCREEN);
+        MEM32(p + 0x20) = (uint32_t)GetSystemMetrics(SM_CYSCREEN);
+        MEM32(p + 0x24) = 1;                       /* MONITORINFOF_PRIMARY */
+    }
+    RET(1); STDRET(2);
+}
 
 /* -------------------------------------------------------------- registry */
 

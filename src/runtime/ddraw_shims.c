@@ -297,12 +297,54 @@ static void dd_GetDisplayMode(void) {
     RET(DD_OK); STDRET(2);
 }
 
+/*
+ * GetCaps, filled in properly. The near-empty version was reporting
+ * dwVidMemTotal = 0 and dwVidMemFree = 0, and a device with no video memory is
+ * a device the game cannot allocate a surface on -- so it discarded the
+ * enumerated device and exited.
+ *
+ * DDCAPS offsets, from ddraw.h's DDCAPS_DX7: dwSize 0x00, dwCaps 0x04,
+ * dwCaps2 0x08, dwCKeyCaps 0x0C, dwFXCaps 0x10, then bit-depth fields, and
+ * dwVidMemTotal/dwVidMemFree at 0x3C/0x40 -- NOT at 0x54, which is where a
+ * reading of the older DDCAPS puts them.
+ *
+ * DDCAPS_3D is deliberately not claimed. Claiming it invites the Direct3D
+ * calls that QueryInterface refuses, and the software renderer is the target.
+ */
+#define DDCAPS_BLT            0x00000040u
+#define DDCAPS_BLTQUEUE       0x00000080u
+#define DDCAPS_BLTFOURCC      0x00000100u
+#define DDCAPS_BLTSTRETCH     0x00000200u
+#define DDCAPS_GDI            0x00000400u
+#define DDCAPS_CANBLTSYSMEM   0x00000800u
+#define DDCAPS_COLORKEY       0x00000008u
+#define DDCAPS_CANCLIP        0x00000010u
+#define DDCAPS_CANCLIPSTRETCHED 0x00000020u
+#define DDCAPS_PALETTE        0x00004000u
+#define DDCAPS_BLTCOLORFILL   0x04000000u
+#define DDCAPS2_CANRENDERWINDOWED 0x00080000u
+#define DDCAPS2_WIDESURFACES      0x00001000u
+
+static void fill_caps(uint32_t c) {
+    if (!c) return;
+    for (uint32_t i = 0; i < 380; i += 4) MEM32(c + i) = 0;
+    MEM32(c + 0x00) = 380;
+    MEM32(c + 0x04) = DDCAPS_BLT | DDCAPS_BLTQUEUE | DDCAPS_BLTFOURCC |
+                      DDCAPS_BLTSTRETCH | DDCAPS_GDI | DDCAPS_CANBLTSYSMEM |
+                      DDCAPS_COLORKEY | DDCAPS_CANCLIP |
+                      DDCAPS_CANCLIPSTRETCHED | DDCAPS_PALETTE |
+                      DDCAPS_BLTCOLORFILL;
+    MEM32(c + 0x08) = DDCAPS2_CANRENDERWINDOWED | DDCAPS2_WIDESURFACES;
+    MEM32(c + 0x0C) = 0x00000001u;      /* DDCKEYCAPS_DESTBLT */
+    MEM32(c + 0x18) = 0x00000001u;      /* DDPCAPS_8BIT */
+    MEM32(c + 0x3C) = 64u << 20;        /* dwVidMemTotal */
+    MEM32(c + 0x40) = 64u << 20;        /* dwVidMemFree  */
+}
+
 static void dd_GetCaps(void) {
-    /* DDCAPS.dwCaps at +4. Claim blitting and no 3D: the software path is what
-     * is implemented, and claiming hardware invites calls that are not. */
-    uint32_t a = ARG(1), b = ARG(2);
-    if (a) { MEM32(a + 0) = 380; MEM32(a + 4) = 0x00000040u; }  /* DDCAPS_BLT */
-    if (b) { MEM32(b + 0) = 380; MEM32(b + 4) = 0; }
+    fill_caps(ARG(1));                   /* driver caps */
+    fill_caps(ARG(2));                   /* HEL caps    */
+    fprintf(stderr, "[dd] GetCaps -> blt/stretch/gdi, 64 MB video memory\n");
     RET(DD_OK); STDRET(3);
 }
 
@@ -828,10 +870,58 @@ static void ddraw_DirectDrawCreateEx(void) {
     RET(o ? DD_OK : DDERR_UNSUPPORTED); STDRET(4);
 }
 
+/*
+ * Enumeration has to CALL BACK into lifted code, and a stub that returns
+ * DD_OK without doing so leaves the game with an empty device list -- which it
+ * then indexes, reading 0x910E06F8 out of uninitialised stack.
+ *
+ * The A and Ex forms are NOT interchangeable, and sharing one shim between them
+ * was a purge bug: DirectDrawEnumerateA takes 2 arguments and its callback 4,
+ * while DirectDrawEnumerateExA takes 3 and its callback 5 (the extra one is an
+ * HMONITOR). One device is reported -- the primary display -- because that is
+ * the one the software renderer draws to.
+ */
+static void enum_callback(uint32_t cb, uint32_t ctx, int ex) {
+    recomp_func_t f = recomp_lookup(cb);
+    if (!f) {
+        /* A callback inside the image that the catalog missed: it will show up
+         * as an unresolved dispatch rather than silently doing nothing. */
+        fprintf(stderr, "[dd] enum callback 0x%08X is not in the dispatch "
+                        "table\n", cb);
+        return;
+    }
+    uint32_t desc = crt_alloc(64), name = crt_alloc(32);
+    strcpy((char*)(uintptr_t)ADDR(desc), "Primary Display Driver");
+    strcpy((char*)(uintptr_t)ADDR(name), "display");
+
+    /* stdcall: push right to left, then the dummy return address. The
+     * callback's own `ret` pops all of it. */
+    if (ex) PUSH32(g_esp, 0);          /* hMonitor */
+    PUSH32(g_esp, ctx);
+    PUSH32(g_esp, name);
+    PUSH32(g_esp, desc);
+    PUSH32(g_esp, 0);                  /* lpGUID = NULL -> the primary device */
+    PUSH32(g_esp, RECOMP_RETADDR);
+    f();
+}
+
 static void ddraw_DirectDrawEnumerateA(void) {
-    /* One device, no callback: the game's "use the default" path is the one
-     * that works here. */
+    uint32_t cb = ARG(0), ctx = ARG(1);
+    uint32_t save = g_esp;
+    fprintf(stderr, "[dd] DirectDrawEnumerateA(cb=0x%08X)\n", cb);
+    enum_callback(cb, ctx, 0);
+    g_esp = save;
     RET(DD_OK); STDRET(2);
+}
+
+static void ddraw_DirectDrawEnumerateExA(void) {
+    uint32_t cb = ARG(0), ctx = ARG(1);
+    uint32_t save = g_esp;
+    fprintf(stderr, "[dd] DirectDrawEnumerateExA(cb=0x%08X, flags=0x%X)\n",
+            cb, ARG(2));
+    enum_callback(cb, ctx, 1);
+    g_esp = save;
+    RET(DD_OK); STDRET(3);
 }
 
 /*
@@ -845,11 +935,16 @@ uint32_t ddraw_proc(const char* name) {
                                            "DirectDrawCreate");
         return va_create;
     }
-    if (!strcmp(name, "DirectDrawEnumerateA") ||
-        !strcmp(name, "DirectDrawEnumerateExA")) {
+    if (!strcmp(name, "DirectDrawEnumerateA")) {
         if (!va_enum) va_enum = method(ddraw_DirectDrawEnumerateA,
-                                       "DirectDrawEnumerate");
+                                       "DirectDrawEnumerateA");
         return va_enum;
+    }
+    static uint32_t va_enumex;
+    if (!strcmp(name, "DirectDrawEnumerateExA")) {
+        if (!va_enumex) va_enumex = method(ddraw_DirectDrawEnumerateExA,
+                                           "DirectDrawEnumerateExA");
+        return va_enumex;
     }
     static uint32_t va_createex;
     if (!strcmp(name, "DirectDrawCreateEx")) {
@@ -864,4 +959,70 @@ uint32_t ddraw_proc(const char* name) {
         return va_di;
     }
     return 0;
+}
+
+/* ------------------------------------------- a generic COM object
+
+ * The DirectX version probe needs CoCreateInstance(CLSID_DirectMusic) to
+ * succeed -- not to do anything, just to hand back something it can Release:
+ *
+ *     CoCreateInstance(CLSID_DirectMusic, ...)   fails  -> version 0x600
+ *                                                succeeds -> 0x601, then
+ *     GetProcAddress(ddraw, "DirectDrawCreateEx")        -> 0x700
+ *
+ * So a refusal caps the answer at DirectX 6 and the game exits. This is the
+ * object that gets it past 0x601.
+ *
+ * Its vtable is IUnknown followed by slots that ABORT rather than return.
+ * Returning a plausible success from an unknown COM method is how the
+ * CoCreateInstance bug happened in the first place; aborting names the slot in
+ * the [com] line printed just before it, which says exactly what to implement.
+ */
+#define GENERIC_SLOTS 64
+
+static void gen_unimplemented(void) {
+    fprintf(stderr,
+        "\n[com] unimplemented method on a generic object (the [com] line above\n"
+        "      names it). No purge count is known for it, so returning would\n"
+        "      desynchronise the stack silently. Implement it in ddraw_shims.c.\n");
+    abort();
+}
+
+static uint32_t g_vtbl_generic;
+
+static void generic_init(void) {
+    uint32_t v = crt_alloc(GENERIC_SLOTS * 4 + 4);
+    MEM32(v + 0) = method(m_QueryInterface, "Generic::QueryInterface");
+    MEM32(v + 4) = method(m_AddRef,         "Generic::AddRef");
+    MEM32(v + 8) = method(m_Release,        "Generic::Release");
+    static const char* names[GENERIC_SLOTS];
+    for (unsigned i = 3; i < GENERIC_SLOTS; i++) {
+        static char buf[GENERIC_SLOTS][24];
+        snprintf(buf[i], sizeof(buf[i]), "Generic::slot%u", i);
+        names[i] = buf[i];
+        MEM32(v + i * 4) = method(gen_unimplemented, names[i]);
+    }
+    g_vtbl_generic = v;
+}
+
+/*
+ * CoCreateInstance. Answers with a generic object so the probe can Release it.
+ * Every CLSID is accepted deliberately: the alternative is a table of GUIDs
+ * that has to be guessed at, and an unknown class that returns an object whose
+ * methods abort is more informative than one that is refused.
+ */
+uint32_t ddraw_cocreate(uint32_t clsid_guid) {
+    if (!g_vtbl_generic) generic_init();
+    uint32_t o = obj_new(g_vtbl_generic, KIND_DD);
+    fprintf(stderr, "[ole] CoCreateInstance({%08X-...}) -> 0x%08X (generic)\n",
+            clsid_guid, o);
+    return o;
+}
+
+/* Let other shim files hand out a callable synthetic VA (GetProcAddress for a
+ * function that lives outside this file, such as USER32's GetMonitorInfoA). */
+uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name) {
+    for (unsigned i = 0; i < g_method_n; i++)
+        if (g_methods[i] == fn) return METHOD_BASE + i * 4;
+    return method(fn, name);
 }
