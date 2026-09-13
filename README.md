@@ -286,8 +286,7 @@ buffer, an attached Z buffer, a Direct3D 7 device, texture formats enumerated,
 textures uploaded, render state and materials set. All 49 `IDirect3DDevice7`
 methods are implemented, with the purge count of each taken from the headers.
 Nothing is rasterised yet -- `Clear` really clears the render target and the
-`DrawPrimitive` family accepts and counts its vertices -- so that is the next
-job.
+`DrawPrimitive` family accepts and counts its vertices.
 
 Getting that far took one discovery and four corrections, all of the same
 shape, and `docs/STARTUP.md` has them: the game's screen gate reads
@@ -296,20 +295,37 @@ slot of the four device descriptions it keeps inline, so offering only the RGB
 software device made it skip the entire screen and renderer setup and run its
 front end for 61 frames with nothing to draw on.
 
+And then **nothing is presented**, which for a while looked like the last gap:
+`Flip` is never called. It is not the gap. `--dumpframe` writes the render
+target to a BMP from inside a lifted thread and counts its pixels, and both the
+primary and the render target are *entirely black* -- nothing has been drawn
+into them, so the missing present is a symptom.
+
+What the game is actually doing is **waiting for its intro movie**. The boot
+script initialises the RE3D stages, starts a script thread whose block is
+`Loop Forever { ... Smush ... Wait }`, and then sits on a `Wait If`. The exe
+loads `Resource/Smush.dll` by name and asks for four exports; all four were
+unresolved, so the loader `FreeLibrary`d the module and zeroed its handle --
+graceful, silent, and fatal to the script. The four are shimmed now (the movie
+is skipped, not decoded) and the wait is still there, so the producer that
+should satisfy it is the current frontier. `docs/STARTUP.md` has the trace, the
+signatures, and why the engine retires a process whose every context is
+blocked.
+
 ## Where it goes next
 
 In order, and the first two are the ones that matter:
 
-1. **Find out what `GamePPSysLibrary`'s constructor should have been handed.**
-   The object it gets points at string data, and the struct that carries it was
-   built on a stack region the game had just used for a `WIN32_FIND_DATAA`, so
-   its `basic_string` members were never constructed. The tools to chase it are
-   in place: `--calltrace`, `--watch VA`, `--poison ADDR [--poisonval V]`,
-   `--stlwatch ADDR`, and an `addr2line`-able address on every fault.
-2. **Decide about threads.** `CreateThread` is not honoured because the machine
-   state is a single set of globals. If the service loop `InitBase` starts is
-   what registers the system libraries, that decision has to come first, and it
-   means per-thread registers and per-thread simulated stacks.
+1. **Satisfy the `Wait If`.** It is load-bearing: `--nowait` stubs the condition
+   to false and the script runs on and faults in `sub_006BF7B0` on a container
+   whose count is positive and whose array pointer is null, so running past the
+   wait reaches a consumer before its producer. `WaitIf` evaluates its
+   condition, calls `sub_00506EC0`, and on a true answer records the resume line
+   and sets `ctx->flags |= 4`; `sub_00506EC0` walks an event queue. What posts
+   to that queue, and which post never happens, is the question.
+2. **Make the movie thread step.** Its block compiles and never runs a line.
+   Script threads started elsewhere in the same script do run their bodies
+   inline, so this is a specific failure, not a missing scheduler.
 3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
    and returning "no device" cleanly should be enough for a first frame.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*

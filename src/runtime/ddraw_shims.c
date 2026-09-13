@@ -153,6 +153,7 @@ const char* ddraw_method_name(uint32_t va) {
 static uint32_t g_vtbl_dd, g_vtbl_surf;
 uint32_t ddraw_d3d_vtable(void);   /* defined near the Direct3D block */
 static uint32_t g_primary;             /* the surface presented to the window */
+static uint32_t g_d3d_rt;              /* the Direct3D render target */
 static int      g_mode_w = 640, g_mode_h = 480, g_mode_bpp = 16;
 
 static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
@@ -595,6 +596,87 @@ static void sf_Unlock(void) {
     RET(DD_OK); STDRET(2);
 }
 
+/*
+ * --dumpframe PATH: write the render target to a BMP, from whichever lifted
+ * thread is running.
+ *
+ * The game sets a mode, creates a flipping primary with a back buffer and a
+ * Z buffer, creates a Direct3D device against the back buffer, uploads
+ * textures and sets render state -- and never calls Flip, because
+ * CDD7FSScreen::Present (sub_007363B0) is never reached. That leaves one
+ * question that reading code cannot answer: is there an image sitting in that
+ * surface, or is nothing being drawn into it?
+ *
+ * A host thread that presented on a timer was tried first and never ticked:
+ * present_surface ends in UpdateWindow, which waits on the window owner's
+ * message pump, and stderr from a second thread under redirection is its own
+ * hazard. A file needs neither. The non-black pixel count goes in the log, so
+ * a run answers the question without anyone opening the image.
+ *
+ * This is a diagnostic, not a fix. The real present has to come from the game.
+ */
+uint32_t ddraw_dump_target(const char* path) {
+    uint32_t s = g_d3d_rt ? g_d3d_rt : g_primary;
+    if (!s || !O_BITS(s)) {
+        fprintf(stderr, "[dump] nothing to dump (rt=0x%08X primary=0x%08X)\n",
+                g_d3d_rt, g_primary);
+        return 0xFFFFFFFFu;
+    }
+    uint32_t w = O_W(s), h = O_H(s), bpp = O_BPP(s), pitch = O_PITCH(s);
+    const uint8_t* base = (const uint8_t*)(uintptr_t)ADDR(O_BITS(s));
+    uint32_t* out = (uint32_t*)malloc((size_t)w * h * 4);
+    if (!out) return 0xFFFFFFFFu;
+
+    uint32_t nz = 0;
+    for (uint32_t y = 0; y < h; y++) {
+        uint32_t* d = out + (size_t)y * w;
+        if (bpp == 16) {
+            const uint16_t* r = (const uint16_t*)(base + (size_t)y * pitch);
+            for (uint32_t x = 0; x < w; x++) {
+                uint16_t v = r[x];
+                d[x] = (uint32_t)(((v & 0xF800u) << 8) | ((v & 0x07E0u) << 5)
+                                | ((v & 0x001Fu) << 3));
+                if (v) nz++;
+            }
+        } else if (bpp == 32) {
+            const uint32_t* r = (const uint32_t*)(base + (size_t)y * pitch);
+            for (uint32_t x = 0; x < w; x++) {
+                d[x] = r[x];
+                if (r[x] & 0xFFFFFFu) nz++;
+            }
+        } else {
+            memset(d, 0, (size_t)w * 4);
+        }
+    }
+
+    uint32_t px = w * h * 4, fsz = 14 + 40 + px, off = 14 + 40;
+    uint8_t fh[14] = {'B', 'M'};
+    memcpy(fh + 2, &fsz, 4);
+    memcpy(fh + 10, &off, 4);
+    uint8_t ih[40] = {0};
+    uint32_t v40 = 40, planes_bits = (1u) | (32u << 16), zero = 0;
+    int32_t negh = -(int32_t)h;
+    memcpy(ih + 0, &v40, 4);
+    memcpy(ih + 4, &w, 4);
+    memcpy(ih + 8, &negh, 4);          /* top-down */
+    memcpy(ih + 12, &planes_bits, 4);
+    memcpy(ih + 16, &zero, 4);         /* BI_RGB */
+    memcpy(ih + 20, &px, 4);
+
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        fwrite(fh, 1, 14, f);
+        fwrite(ih, 1, 40, f);
+        fwrite(out, 1, px, f);
+        fclose(f);
+    }
+    fprintf(stderr, "[dump] %s: surface 0x%08X %ux%u %ubpp,"
+                    " %u of %u pixels non-black\n",
+            f ? path : "(write failed)", s, w, h, bpp, nz, w * h);
+    free(out);
+    return nz;
+}
+
 static void sf_Flip(void) {
     uint32_t s = ARG(0);
     uint32_t b = O_BACK(s);
@@ -692,6 +774,34 @@ static void sf_GetPixelFormat(void) {
         }
     }
     RET(DD_OK); STDRET(2);
+}
+
+/*
+ * DDDEVICEIDENTIFIER2 -- 1068 bytes: two 512-byte strings, an 8-byte driver
+ * version, vendor/device/subsys/revision, a GUID and dwWHQLLevel.
+ *
+ * This used to be an "return DD_OK and write nothing" stub, and the game read
+ * the uninitialised buffer back and logged it:
+ *
+ *     [dbg] Driver: ''   Description: ''   VendorId: 00000030
+ *     [dbg] WHQLLevel: 117abb00
+ *
+ * A 1999 title reads this to decide which card-specific workarounds to switch
+ * on, so leaving it as stack garbage is a coin flip on every one of them. An
+ * unknown vendor with a WHQL-signed driver is the combination that matches no
+ * blacklist entry.
+ */
+static void dd_GetDeviceIdentifier(void) {
+    uint32_t out = ARG(1);
+    if (!out) { RET(DDERR_INVALIDPARAMS); STDRET(3); return; }
+    uint8_t* p = (uint8_t*)(uintptr_t)ADDR(out);
+    memset(p, 0, 1068);
+    strcpy((char*)p, "ddraw.dll");
+    strcpy((char*)p + 512, "Direct3D HAL");
+    MEM32(out + 1024) = 0;            /* liDriverVersion low  */
+    MEM32(out + 1028) = 4 << 16;      /* high: 4.x            */
+    MEM32(out + 1064) = 1;            /* dwWHQLLevel: signed  */
+    RET(DD_OK); STDRET(3);
 }
 
 static void sf_GetCaps(void) {
@@ -824,7 +934,7 @@ void ddraw_init(void) {
         {sf_ok3,                  "IDirectDraw4::GetSurfaceFromDC"},
         {sf_ok1,                  "IDirectDraw4::RestoreAllSurfaces"},
         {sf_ok1,                  "IDirectDraw4::TestCooperativeLevel"},
-        {sf_ok3,                  "IDirectDraw4::GetDeviceIdentifier"},
+        {dd_GetDeviceIdentifier,  "IDirectDraw4::GetDeviceIdentifier"},
         {sf_ok4,                  "IDirectDraw7::StartModeTest"},
         {sf_ok3,                  "IDirectDraw7::EvaluateMode"},
     };
@@ -1089,6 +1199,56 @@ static void ddraw_DirectDrawEnumerateExA(void) {
  * Resolve a name GetProcAddress was asked for. Returns a synthetic VA, so the
  * game can store it, call through it, and land in C.
  */
+uint32_t ddraw_register_host_proc(import_fn_t fn, const char* name);
+
+/* ------------------------------------------------------------ SMUSH.DLL
+ *
+ * The four entry points the game asks LoadLibrary/GetProcAddress for, and the
+ * reason the boot script never finishes.
+ *
+ * Force Commander opens its first section by playing the intro movie: the boot
+ * script starts a thread whose block is Loop Forever { Smush... Wait } and then
+ * sits on a Wait If until that thread is done. With SMUSH.DLL's exports
+ * unresolved the loader at 0x0068BE32 sees a NULL proc, FreeLibrary's the
+ * module and zeroes its handle -- graceful, but the script still waits, and a
+ * process whose every context is blocked is one the process manager retires.
+ * The section then ends without a single frame ever being presented.
+ *
+ * Signatures come from the one caller, sub_0068D190, which is the movie player:
+ *
+ *     SmushSetVolume(vol)                         0x0068D283, esp += 4
+ *     SmushStartup(surface)                       0x0068D296
+ *     SmushPlay(name, 0xF, 0,0,0, 640, 480,       0x0068D2E8, esp += 0x34
+ *               -1, 0, callback, 1, 1e6, 1e6)       -- 13 args, cdecl
+ *     SmushShutdown()                             0x0068D30D
+ *
+ * SmushPlay is blocking -- the caller sets its state to 4 and shuts down on the
+ * next line -- so returning at once is exactly "the movie finished", which is
+ * what pressing a key during the intro does on real hardware.
+ *
+ * ponytail: no decoding. The movie is skipped, not played. Decoding SAN/NUT
+ * belongs in its own file behind a --movies flag if the frames are ever wanted;
+ * what the game needs from here is the completion, not the pixels.
+ */
+static void smush_Startup(void) {
+    fprintf(stderr, "[smush] Startup(surface=0x%08X)\n", ARG(0));
+    RET(1); CDECLRET();
+}
+
+static void smush_Play(void) {
+    const char* n = ARG(0) ? (const char*)(uintptr_t)ADDR(ARG(0)) : "(null)";
+    fprintf(stderr, "[smush] Play(\"%s\", %ux%u) -- skipped\n",
+            n, ARG(5), ARG(6));
+    RET(0); CDECLRET();
+}
+
+static void smush_Shutdown(void) {
+    fprintf(stderr, "[smush] Shutdown\n");
+    RET(0); CDECLRET();
+}
+
+static void smush_SetVolume(void) { RET(0); CDECLRET(); }
+
 uint32_t ddraw_proc(const char* name) {
     static uint32_t va_create, va_enum;
     if (!strcmp(name, "DirectDrawCreate")) {
@@ -1119,6 +1279,15 @@ uint32_t ddraw_proc(const char* name) {
                                    "DirectInputCreateA");
         return va_di;
     }
+    static const struct { const char* name; import_fn_t fn; } smush[] = {
+        {"SmushStartup",   smush_Startup},
+        {"SmushPlay",      smush_Play},
+        {"SmushShutdown",  smush_Shutdown},
+        {"SmushSetVolume", smush_SetVolume},
+    };
+    for (unsigned i = 0; i < sizeof smush / sizeof smush[0]; i++)
+        if (!strcmp(name, smush[i].name))
+            return ddraw_register_host_proc(smush[i].fn, smush[i].name);
     return 0;
 }
 
@@ -1468,8 +1637,8 @@ static void d3d_EnumZBufferFormats(void);
 static void d3d_EvictManagedTextures(void);
 
 /* IDirect3DDevice7 state, declared here because the IDirect3D7 methods that
- * create the device set the first three. */
-static uint32_t g_d3d_rt;                       /* render target surface */
+ * create the device set the first two (g_d3d_rt is declared with g_primary,
+ * which ddraw_present_target needs before this point). */
 static uint32_t g_d3d_dev;                      /* the one device object */
 static uint32_t g_d3d_devdesc;                  /* a target copy of the HAL desc */
 

@@ -55,6 +55,15 @@ uint32_t  g_icall_count = 0;
  * than as an address. --argtrace on the subsystem lookup says which subsystem
  * a line calls; this says which function.
  */
+/* --dumpframe PATH: every DUMP_EVERY lifted-function entries, write the
+ * Direct3D render target to PATH.N.bmp and log its non-black pixel count. The
+ * game never presents, so this is the only way to tell an empty surface from
+ * an unpresented one. */
+#define DUMP_EVERY 4000000u
+static const char* g_dumpframe;
+uint32_t ddraw_dump_target(const char* path);
+
+#define GET_LIBRARY  0x0052C300u
 #define VIS_RUN_LINE 0x00512170u
 #define VIS_STEP      0x005127E0u
 static int g_scripttrace;
@@ -78,7 +87,32 @@ static int g_scripttrace;
  * analysis/rtti.json maps to a class name.
  */
 static void focom_trace_extra(uint32_t va) {
+    if (g_dumpframe) {
+        static unsigned n, seq;
+        if (++n >= DUMP_EVERY) {
+            char path[512];
+            n = 0;
+            snprintf(path, sizeof path, "%s.%u.bmp", g_dumpframe, seq++);
+            ddraw_dump_target(path);
+        }
+    }
     if (!g_scripttrace) return;
+    /*
+     * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
+     * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
+     * that names a subsystem the exe never registered therefore gets NULL
+     * back, silently, and whatever the line was going to do does not happen.
+     * Reading the same slot here says which ids are missing, which no static
+     * pass can: the registration is 8,662 call sites of a two-hop pattern.
+     */
+    if (va == GET_LIBRARY) {
+        uint32_t id = MEM32(g_esp + 4);
+        uint32_t tab = g_ecx >= 0x00200000u ? MEM32(g_ecx + 8) : 0;
+        uint32_t lib = (tab >= 0x00200000u && id < 1024) ? MEM32(tab + id * 4) : 0;
+        if (!lib) fprintf(stderr, "[nolib] t%lu GetLibrary(%u) -> NULL\n",
+                          GetCurrentThreadId(), id);
+        return;
+    }
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -89,8 +123,17 @@ static void focom_trace_extra(uint32_t va) {
                        ? MEM32(g_ecx + 0x18) + ln * 32 : 0;
         uint32_t obj = entry ? MEM32(entry + 4) : 0;
         uint32_t vt = obj >= 0x00200000u ? MEM32(obj) : 0;
-        fprintf(stderr, "[step] t%lu block=%08X line=%d of %u vt=%08X\n",
-                GetCurrentThreadId(), g_ecx, (int)ln, n, vt);
+        /* [entry+4] is always the GamePPVisLibrary WRAPPER, whose vtable is the
+         * same for every line and therefore says nothing. The object that
+         * implements this particular script function is at wrapper+0x20 -- see
+         * sub_00517FA0, which is nothing but a forward to it -- and ITS vtable
+         * is a class per script function, which rtti.json names. */
+        uint32_t inner = obj >= 0x00200000u ? MEM32(obj + 0x20) : 0;
+        uint32_t ivt = inner >= 0x00200000u ? MEM32(inner) : 0;
+        fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
+                        " fn=%08X vt=%08X ivt=%08X\n",
+                GetCurrentThreadId(), g_ecx, (int)ln, n,
+                entry ? MEM32(entry) : 0, vt, ivt);
         return;
     }
     if (va != VIS_RUN_LINE) return;
@@ -149,7 +192,32 @@ recomp_func_t recomp_lookup(uint32_t va) {
  */
 import_fn_t ddraw_lookup_method(uint32_t va);
 
+/*
+ * --nowait: answer GamePPGlobalSysWaitIf's condition with "no".
+ *
+ * The boot script ends with one context on Wait Forever and one on a Wait If
+ * that never clears, and the section then retires with nothing ever presented.
+ * Whether the wait is the whole story or merely the last symptom cannot be read
+ * off the code -- the condition is a compiled script expression. So this
+ * replaces sub_005D4350 (WaitIf::Execute, vtable 0x007D1408 slot 20) with a
+ * "condition false" stub and lets the script run on.
+ *
+ * It is a probe, not a fix: a real game skips the intro on a keypress, it does
+ * not stop evaluating its conditions. `ret 0xc` is three arguments, hence
+ * STDRET(4).
+ */
+#define WAITIF_EXEC 0x005D4350u
+int g_nowait = 0;
+
+static void focom_waitif_false(void) {
+    uint32_t ctx = MEM32(g_esp + 8);
+    fprintf(stderr, "[nowait] WaitIf stubbed, ctx=%08X flags=%08X\n",
+            ctx, ctx >= 0x00200000u ? MEM32(ctx + 0x30) : 0);
+    RET(0); STDRET(4);
+}
+
 recomp_func_t recomp_lookup_manual(uint32_t va) {
+    if (g_nowait && va == WAITIF_EXEC) return (recomp_func_t)focom_waitif_false;
     return (recomp_func_t)ddraw_lookup_method(va);
 }
 
@@ -516,6 +584,9 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--trace")) g_shim_trace = 1;
         else if (!strcmp(argv[i], "--watchdog") && i + 1 < argc)
             g_watchdog_s = (DWORD)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--dumpframe") && i + 1 < argc)
+            g_dumpframe = argv[++i];
+        else if (!strcmp(argv[i], "--nowait")) g_nowait = 1;
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
