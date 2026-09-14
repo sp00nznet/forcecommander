@@ -465,6 +465,11 @@ directly is what says so:
 cc1.exe: error while loading shared libraries: libmpfr-6.dll: cannot open ...
 ```
 
+And the reverse: `run_lift.py` needs the *Windows* Python, the one with
+capstone installed. With `msys64/mingw64/bin` first on `PATH` its own `python`
+wins and the lift dies on `ModuleNotFoundError: No module named 'capstone'`.
+Prepend the mingw directory for `cmake --build` and for nothing else.
+
 ## Where it is now
 
 The section renders and presents. The frontier is `sub_00755280`, slot 7 of a
