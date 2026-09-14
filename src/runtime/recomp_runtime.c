@@ -210,6 +210,72 @@ import_fn_t ddraw_lookup_method(uint32_t va);
  * not stop evaluating its conditions. `ret 0xc` is three arguments, hence
  * STDRET(4).
  */
+/*
+ * --switchtrace: what GamePPGlobalSysSwitch is dispatching on, and what its
+ * Cases compare against.
+ *
+ * sub_005D0990 evaluates the switch expression and stores it at [ctx+0x80],
+ * where sub_005D0520 (Case) compares it; both take (library, ctx, line), so
+ * the context is the SECOND stack argument and the line record the third. The
+ * current line is [ctx+0x2C] and has to be read before calling through,
+ * because Execute ends by advancing it. [ctx+0x24] is the code container and
+ * [container+0x1C] its line count, which is the only way here to tell one
+ * script block from another.
+ *
+ * What it found in the front end: the 309-line page controller switches on
+ * the CURRENT page id, which is 7, at lines 63, 89 and 212, and its Cases
+ * compare against 5, 11, 19 and 20. So "it takes the default" is not a
+ * failure -- page 7 simply has no special case. That corrected an earlier
+ * reading of exactly the same trace, which is why the probe is worth keeping.
+ */
+/*
+ * --switchtrace also reports the Cases, because "none of them matched" is only
+ * half an answer. sub_005D0520 takes (library, ctx, line) like the Switch, and
+ * the case's constant is an expression node at line+0x10 -- so the node's
+ * words go in the report and the switch value comes from [ctx+0x80].
+ */
+#define CASE_EXEC 0x005D0520u
+
+static void focom_case_probe(void) {
+    uint32_t ctx = MEM32(g_esp + 8), line = MEM32(g_esp + 0xC);
+    int ln = T_OK(ctx) ? (int)MEM32(ctx + 0x2C) : -1;
+    uint32_t val = T_OK(ctx) ? MEM32(ctx + 0x80) : 0;
+    recomp_func_t real = recomp_lookup(CASE_EXEC);
+    if (!real) { RET(0); STDRET(4); return; }
+    real();
+    /* [ctx+0x24] is the code container and [container+0x1C] its line count,
+     * which is the only way to tell one script block from another here: the
+     * front end's page controller is the 309-line one. */
+    uint32_t blk = T_OK(ctx) ? MEM32(ctx + 0x24) : 0;
+    uint32_t cnt = T_OK(blk) ? MEM32(blk + 0x1C) : 0;
+    if (cnt == 309 && T_OK(line))
+        fprintf(stderr, "[case] 309:line=%d switchval=%d node=%08X %08X %08X"
+                        " -> line %d\n",
+                ln, (int)val, MEM32(line + 0x10), MEM32(line + 0x14),
+                MEM32(line + 0x18), T_OK(ctx) ? (int)MEM32(ctx + 0x2C) : -1);
+}
+
+#define SWITCH_EXEC 0x005D0990u
+int g_switchtrace = 0;
+
+static void focom_switch_probe(void) {
+    /* sub_005D0990 reads its context from [esp+0x10] AFTER two pushes, which
+     * is the SECOND stack argument, and the line record from the third. */
+    uint32_t ctx = MEM32(g_esp + 8), arg1 = MEM32(g_esp + 0xC);
+    /* The line has to be read BEFORE: Switch::Execute ends in sub_00507050,
+     * which advances it. */
+    int line = T_OK(ctx) ? (int)MEM32(ctx + 0x2C) : -1;
+    recomp_func_t real = recomp_lookup(SWITCH_EXEC);
+    if (!real) { RET(0); STDRET(4); return; }
+    real();
+    uint32_t blk = T_OK(ctx) ? MEM32(ctx + 0x24) : 0;
+    uint32_t cnt = T_OK(blk) ? MEM32(blk + 0x1C) : 0;
+    if (T_OK(ctx) && cnt == 309)
+        fprintf(stderr, "[switch] 309:line=%d value=%d\n",
+                line, (int)MEM32(ctx + 0x80));
+    (void)arg1;
+}
+
 #define WAITIF_EXEC 0x005D4350u
 int g_nowait = 0;
 int g_waittrace = 0;
@@ -268,6 +334,10 @@ recomp_func_t recomp_lookup_manual(uint32_t va) {
         return (recomp_func_t)focom_waitif_probe;
     if (g_waittrace && va == WAIT_DECIDE)
         return (recomp_func_t)focom_waitdecide_probe;
+    if (g_switchtrace && va == SWITCH_EXEC)
+        return (recomp_func_t)focom_switch_probe;
+    if (g_switchtrace && va == CASE_EXEC)
+        return (recomp_func_t)focom_case_probe;
     return (recomp_func_t)ddraw_lookup_method(va);
 }
 
@@ -855,6 +925,7 @@ int main(int argc, char** argv) {
             g_click_hold = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--nowait")) g_nowait = 1;
         else if (!strcmp(argv[i], "--waittrace")) g_waittrace = 1;
+        else if (!strcmp(argv[i], "--switchtrace")) g_switchtrace = 1;
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;

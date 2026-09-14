@@ -371,12 +371,15 @@ start and the panel fills with a scrolling credits roll. **View Introduction**
 works, and so does **exit**, which brings up a confirmation page with a button
 each side.
 
-**Single Player and Multiplayer do not**, and the reason is one line. The menu
-is a 217-line script block -- a Switch on the row with a Case per item -- and
-Single Player's Case runs eleven set-up calls, tests a condition at line 20,
-takes the Else and does nothing. Credits, from the same Switch, runs to its own
-Case and starts its page. `docs/STARTUP.md` has the trace and the five things
-that condition is *not*.
+**Single Player and Multiplayer do not.** The menu is a 217-line script block
+-- a Switch on the row with a Case per item -- and Single Player's Case runs
+its eleven set-up calls to completion: it sets a `Bool`, an `Int` and an `Enum`
+and posts a `Message`. The front end's 309-line page controller then reacts,
+running ten lines it had never run. And the page does not change: click Single
+Player, then the exit arrow, and the quit confirmation comes up instead of a
+return to the menu, which is what settles it. `docs/STARTUP.md` has the trace
+and the five things this is *not* -- including one earlier reading of the same
+trace that `--switchtrace` proved wrong.
 
 Three other things had to be right for that, and `docs/STARTUP.md` has them:
 `IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),

@@ -677,19 +677,37 @@ Introduction, Show Credits**, and the back arrow is `exit`.
 ### What does not: Single Player and Multiplayer
 
 The menu is one 217-line script block, a Switch on the row index with a Case
-per item. Single Player is the Case at line 6, and with `--scripttrace` the
-path it takes is exact:
+per item. Single Player is the Case at line 6, and `--scripttrace` gives the
+path it takes exactly:
 
 ```
 L2 Switch  L3 Case  L4 arg  L5 Switch  L6 Case   <- item 0
-L7 Comment  L8 If  L9..L19 (eleven calls: Variable, Bool, Set, Message, Int)
-L20 <condition>  L21 Else  L23 EndIf              <- and it stops
+L7 Comment  L8 If  L9..L19 (eleven calls: Variable, Bool, Set, Message, Int,
+                            Enum)
+L20 <statement>  L21 Else  L23 EndIf             <- the branch ends normally
 ```
 
-Lines 9 to 19 set something up; line 20 tests it; the test is false and the
-Else does nothing. Show Credits, from the same Switch, runs `L6 L27 L49 L52`
-to its own Case and then two `GamePPSysLibrary` lines that start the credits
-page. So the dispatcher is fine and the gate is that one condition.
+It **runs to completion** -- L21 is the Else line skipping to the EndIf, which
+is how a taken branch finishes, not a bail-out. And the front end's page
+controller, a 309-line block, reacts: lines 212, 213, 217, 219, 221-226 run
+for the first time. So the click is seen, the handler acts, the controller
+responds, and the page does not change.
+
+The page identity is not in doubt, because the exit arrow settles it: click
+Single Player, then exit, and the quit confirmation comes up (its three prompt
+lines at x=311..315 and its two buttons at y=294) instead of a return to the
+menu. We are still on the main menu.
+
+An earlier reading of this said the controller's Switch "takes its
+DefaultCase, so the requested page is not one it knows". That was wrong, and
+`--switchtrace` is what corrected it: the 309-line controller switches on the
+**current** page id, which is 7, at lines 63, 89 and 212, and its Cases
+compare against 5, 11, 19 and 20. Page 7 having no special case is not a
+failure.
+
+So the handler sets state (`Set` a `Bool` `Variable`, an `Int`, an `Enum`) and
+posts a `Message`, the controller runs its response, and nothing opens. What
+consumes that state is the next thing to find.
 
 What it is not:
 
@@ -701,20 +719,23 @@ What it is not:
   so the game ran with no settings path at all. `make_focom_ini.py` emits it
   now, and the argument is the FILE: given the directory the handler faults in
   `sub_006847E0` constructing a `std::string` from a null pointer, and given
-  the `.opt` it runs clean. It does not change line 20.
+  the `.opt` it runs clean. It changes nothing here.
 - **Not the window messages.** The game's own procedure
   (`sub_00665D10` -> `sub_00665500`) dispatches messages 7..0x100, 0x101 and
   0x102..0x112 and sends everything else to `DefWindowProc`, so WM_MOUSEMOVE
   (0x200) and WM_LBUTTONDOWN (0x201) reach it and are thrown away. The mouse
   is DirectInput only. Keys DO reach it, and Enter and Space change nothing.
-- **Not the click shape.** One tap, two taps, 60 ms and 2 s holds, and the
-  forward arrow after a selection: all only select.
+- **Not the click shape.** One tap, two taps, 60 ms and 2 s holds, a second
+  click on the same row, and the forward arrow after a selection: all only
+  select.
+- **Not the game's own diagnostics.** With `--poke 0x00833878 1` the assert
+  and log machinery is live and reports nothing.
 
 `Resource/Players` and `Resource/GameFiles` are empty, and the disc does not
-carry them -- they are created at runtime -- so a missing player profile is
-still the best guess for what line 20 asks about. `missionSelector.gtx`'s
-`NoName`, `blankname`, `namealready` and `MaxNames` say the front end has a
-name-entry flow, and both gated items are the two that would need a name.
+carry them -- they are created at runtime -- so a missing player profile
+remains the best guess. `missionSelector.gtx`'s `NoName`, `blankname`,
+`namealready` and `MaxNames` say the front end has a name-entry flow, and both
+gated items are the two that would need a name.
 
 ## Where it is now
 
