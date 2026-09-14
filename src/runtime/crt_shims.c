@@ -1167,7 +1167,11 @@ static void k32_FindFirstFileA(void) {
     memset(&fd, 0, sizeof(fd));
     const char* hp = host_path(ARG(0), p, sizeof(p));
     HANDLE h = hp ? FindFirstFileA(hp, &fd) : INVALID_HANDLE_VALUE;
-    if (g_shim_trace)
+    /* A failed enumeration is reported the way a failed open is: always.
+     * An empty directory and a missing one look identical to the caller,
+     * and a front end that enumerates a directory it needs and finds
+     * nothing waits forever without saying so. */
+    if (g_shim_trace || h == INVALID_HANDLE_VALUE)
         fprintf(stderr, "[k32] FindFirstFileA(\"%s\") -> %s\n", hp ? hp : "(null)",
             h == INVALID_HANDLE_VALUE ? "not found" : fd.cFileName);
     if (h == INVALID_HANDLE_VALUE) { RET(0xFFFFFFFFu); STDRET(2); return; }

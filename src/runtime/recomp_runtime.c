@@ -486,15 +486,12 @@ static int forward_to_lifted(HWND h, UINT m, WPARAM w, LPARAM l, uint32_t* out) 
  * coordinates, and both windows have a client area of the same size, so it
  * passes through unchanged.
  *
- * This does not fire yet, and the reason is worth writing down: nothing pumps
- * the host window. Its queue belongs to the main thread, and the main thread
- * is inside lifted code from the entry point until the game exits. The game
- * pumps its OWN window, on the Ronin worker that created it. So real mouse
- * input needs the two windows to become one -- and presenting into the game's
- * window was measured at 39 presents a run against 3,000, because cross-thread
- * GDI to another thread's window is that much slower. The shape that works is
- * the game's window created on the main thread, which means intercepting
- * CreateWindowExA's thread, and that is a bigger change than this session.
+ * This is a leftover path now, and harmless. The host window is hidden as
+ * soon as the game's exists (see host_present), so Windows delivers input
+ * straight to the game's own window on the thread that pumps it, which is
+ * what should happen. It stays for the window that exists BEFORE the game
+ * makes its own -- and because nothing pumps the host queue anyway, the main
+ * thread being inside lifted code for the whole run.
  *
  * ponytail: mouse and keys only. No WM_SETFOCUS, no WM_ACTIVATE, no capture,
  * no WM_CHAR translation -- add them when something is observed to want one.
@@ -545,7 +542,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
 /* Create the host window and an 8bpp-into-32bpp backing surface. The game's
  * own renderer has a memory path (RE3D's CDD7MemRenderer), so what it wants
  * from us first is a lockable surface, not Direct3D. */
-uint32_t host_create_window(const char* title) {
+uint32_t host_create_window(const char* title, int show) {
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
@@ -595,25 +592,15 @@ uint32_t host_create_window(const char* title) {
     SelectObject(g_memdc, g_dib);
     ReleaseDC(g_hwnd, dc);
 
-    ShowWindow(g_hwnd, SW_SHOW);
+    /* Shown only when it is the window the user will look at. Running the
+     * game, it is not: the game makes its own, Windows delivers input there,
+     * and host_present blits the frames there. Two windows -- one fullscreen
+     * and white with the game's loading panel, one small with the actual
+     * frames -- was what the split looked like from outside. */
+    if (show) ShowWindow(g_hwnd, SW_SHOW);
     return (uint32_t)(uintptr_t)g_hwnd;
 }
 
-/*
- * Present into the window the GAME created, not ours.
- *
- * There were two windows. The host makes one at startup because something has
- * to exist before the game does anything, and the game then makes its own
- * through CreateWindowExA -- which shims_impl.c binds to the game's real
- * window procedure through win_trampoline, so THAT is the window Windows
- * delivers WM_MOUSEMOVE and WM_LBUTTONDOWN to. Pixels went to one window and
- * input to the other, which is why a synthetic DirectInput click on the menu
- * changed nothing: the pointer was never over the window that could hear it.
- *
- * So the game's window is adopted the moment it appears: the DIB moves with
- * it and the host's own window is hidden. The game's procedure keeps handling
- * its own WM_PAINT -- every Flip blits over the top of whatever it does.
- */
 /*
  * Blit straight to the window, rather than invalidating and calling
  * UpdateWindow.
@@ -633,12 +620,54 @@ uint32_t host_create_window(const char* title) {
  * and the worst case is one torn frame. Add a critical section if tearing ever
  * matters more than the frame rate.
  */
+/*
+ * One window, and it is the game's.
+ *
+ * There were two, and they were visibly two: a fullscreen white one with
+ * "Force Commander" in yellow at the bottom -- the game's own window, with its
+ * GDI loading panel -- and a smaller one beside it with the actual rendered
+ * frames. The host makes the second because something has to exist before the
+ * game calls CreateWindowExA, and the frames were going there while every
+ * mouse and key message Windows delivered went to the game's.
+ *
+ * So the moment the game's window exists, that is where the frames go, and
+ * running the game no longer shows the host's window at all. Presenting is a
+ * GetDC/BitBlt/ReleaseDC from whichever thread flipped, which is allowed
+ * cross-thread and waits for nobody -- unlike UpdateWindow, which hung the
+ * first Flip the game ever issued, because SendMessage to another thread's
+ * window blocks until that thread pumps.
+ *
+ * Hiding the host window from here was tried and is the same trap by another
+ * door: ShowWindow SENDS WM_SHOWWINDOW, the host window belongs to the main
+ * thread, and the main thread is inside lifted code from the entry point
+ * until the game exits. It hung on the first present, with
+ * CDD7FSScreen::Present at the top of the entry trace. So the host window is
+ * simply never shown when the game is going to make its own -- see the `show`
+ * argument to host_create_window.
+ *
+ * StretchBlt rather than BitBlt: the game's window is sized for the exclusive
+ * fullscreen mode it asked for, and the rendered surface is 640x480, so the
+ * two are only the same size by accident. StretchBlt with an equal source and
+ * destination is a BitBlt.
+ */
+void* win_main_hwnd(void);               /* shims_impl.c */
+
 void host_present(void) {
-    if (!g_hwnd) return;
-    HDC dc = GetDC(g_hwnd);
+    HWND target = (HWND)win_main_hwnd();
+    if (!target) target = g_hwnd;
+    if (!target) return;
+    HDC dc = GetDC(target);
     if (!dc) return;
-    BitBlt(dc, 0, 0, g_w, g_h, g_memdc, 0, 0, SRCCOPY);
-    ReleaseDC(g_hwnd, dc);
+    RECT c;
+    if (!GetClientRect(target, &c) || c.right <= 0 || c.bottom <= 0) {
+        c.left = c.top = 0; c.right = g_w; c.bottom = g_h;
+    }
+    if (c.right == g_w && c.bottom == g_h)
+        BitBlt(dc, 0, 0, g_w, g_h, g_memdc, 0, 0, SRCCOPY);
+    else
+        StretchBlt(dc, 0, 0, c.right, c.bottom,
+                   g_memdc, 0, 0, g_w, g_h, SRCCOPY);
+    ReleaseDC(target, dc);
 }
 
 int host_pump(void) {
@@ -1093,7 +1122,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         /* The window title is what the dialog proc draws over the bitmap. */
-        host_create_window("STAR WARS: Force Commander");
+        host_create_window("STAR WARS: Force Commander", 1);
         g_use_lifted_paint = 1;
 
         printf("\n  WM_INITDIALOG -> lifted 0x%08X\n", FOCOM_SPLASH_DLGPROC);
@@ -1117,7 +1146,7 @@ int main(int argc, char** argv) {
     }
 
     recomp_trace_extra = focom_trace_extra;
-    host_create_window("Force Commander (recomp)");
+    host_create_window("Force Commander (recomp)", 0);
 
     /* Entry point from the PE header, resolved through the dispatch table. */
     extern uint32_t focom_entry_va;   /* generated into recomp_dispatch.c's unit */
