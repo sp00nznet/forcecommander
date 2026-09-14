@@ -182,6 +182,16 @@ static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
  * PATH.N.bmp. See ddraw_dump_surface. */
 static int g_uimap;
 void ddraw_set_uimap(void) { g_uimap = 1; }
+/*
+ * --drawprobe X Y: which draw painted this pixel.
+ *
+ * Looking at a frame says a rectangle is the wrong colour; it does not say
+ * which of forty thousand draws made it that colour. Reading one pixel before
+ * and after each draw does, and with the pixel state on the same line the
+ * answer usually names itself.
+ */
+static int g_probe_x = -1, g_probe_y = -1;
+void ddraw_set_drawprobe(int x, int y) { g_probe_x = x; g_probe_y = y; }
 static unsigned g_uimap_epoch;
 void ddraw_uimap_reset(void) { g_uimap_epoch++; }
 #define DUMP_PRESENTS 5
@@ -2526,6 +2536,11 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
         }
     }
 
+    uint32_t was = 0;
+    int probing = (g_probe_x >= 0 && g_probe_x < target.w
+                   && g_probe_y >= 0 && g_probe_y < target.h);
+    if (probing)
+        was = raster_peek(&target, g_probe_x, g_probe_y);
     g_d3d_pixels += raster_draw(&target, zbuf.bits ? &zbuf : NULL,
                                 tex.bits ? &tex : NULL, (int)prim,
                                 fvf, (const uint8_t*)(uintptr_t)ADDR(verts),
@@ -2533,6 +2548,16 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
                                 indices ? (const uint16_t*)(uintptr_t)ADDR(indices)
                                         : NULL,
                                 nidx, wvp, vp, &st);
+    if (probing) {
+        uint32_t now = raster_peek(&target, g_probe_x, g_probe_y);
+        if (now != was)
+            fprintf(stderr, "[probe] prim#%u %06X->%06X fvf=0x%X nv=%u"
+                            " tex=0x%08X blend=%u atest=%u/%u zen=%u zw=%u"
+                            " zf=%u lighting=%u\n",
+                    g_d3d_prims, was, now, fvf, nvert, g_d3d_tex[0],
+                    st.blend, st.alpha_test, st.alpha_ref,
+                    st.z_test, st.z_write, st.z_func, g_d3d_rs[137]);
+    }
 }
 
 /* DrawPrimitive(type, fvf, verts, count, flags) */

@@ -58,6 +58,7 @@ uint32_t  g_icall_count = 0;
  */
 void ddraw_set_dumpframe(const char* path);   /* ddraw_shims.c */
 void ddraw_set_uimap(void);                   /* ddraw_shims.c */
+void ddraw_set_drawprobe(int x, int y);       /* ddraw_shims.c */
 
 /* Is this plausibly a readable target address?
  *
@@ -913,6 +914,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--clickat") && i + 1 < argc)
             g_click_ms = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--uimap")) ddraw_set_uimap();
+        else if (!strcmp(argv[i], "--drawprobe") && i + 2 < argc) {
+            int px = (int)strtol(argv[++i], NULL, 0);
+            ddraw_set_drawprobe(px, (int)strtol(argv[++i], NULL, 0));
+        }
         else if (!strcmp(argv[i], "--clickgap") && i + 1 < argc)
             g_click_gap = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--mousescale") && i + 1 < argc)

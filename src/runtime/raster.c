@@ -277,6 +277,11 @@ static void xform(const float* m, float x, float y, float z, float* o) {
     o[3] = x * m[3] + y * m[7] + z * m[11] + m[15];
 }
 
+uint32_t raster_peek(const rsurf_t* s, int x, int y) {
+    return s->bits && x >= 0 && x < s->w && y >= 0 && y < s->h
+         ? unpack(s, x, y) : 0;
+}
+
 uint32_t raster_draw(const rsurf_t* rt, const rsurf_t* z, const rsurf_t* tex,
                      int prim, uint32_t fvf, const uint8_t* v, uint32_t nvert,
                      const uint16_t* idx, uint32_t nidx,

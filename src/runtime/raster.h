@@ -68,6 +68,10 @@ typedef struct {
 /* Bytes per vertex for an FVF, or 0 if the position format is unknown. */
 uint32_t raster_stride(uint32_t fvf);
 
+/* One pixel of a surface as 0x00RRGGBB, for a caller that wants to know
+ * whether a draw changed it. */
+uint32_t raster_peek(const rsurf_t* s, int x, int y);
+
 /*
  * Draw one primitive batch.
  *
