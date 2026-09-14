@@ -142,6 +142,34 @@ static DWORD g_st_from, g_st_for;
  * target and not a variable slot at all. Dumping the block is how the operand
  * layout gets read rather than guessed.
  */
+/*
+ * --nocond LINES LINE: make one control-flow line's condition false.
+ *
+ * GamePPGlobalSysWhile::Execute (sub_005D2D30) is:
+ *
+ *     result = 0                                 ; on its own stack
+ *     n = (([args] >> 16) & 0x3F) - 3            ; operand count
+ *     evaluate(ctx, args + 0xC, n, &result)
+ *     if (!decide(result)) jump to [args + 8]
+ *
+ * and the result is initialised to ZERO before the call. So an operand count
+ * of nothing leaves it zero and the condition is false -- which means the
+ * condition of any While, If or Wait If can be forced false by writing 3 into
+ * that six-bit field, without touching a single operand or knowing the
+ * operand grammar.
+ *
+ * Which is what this is for. The front end's "For CD" thread spins in a While
+ * whose first operand is the variable "Min CD Number"; the disc IS present
+ * and the check fails for reasons that are ours, so skipping the wait is how
+ * to find out what is behind it.
+ *
+ * ponytail: a diagnostic, and it says so. One line, patched once, no restore,
+ * identified by its block's line count and its own line number -- which is
+ * how a script line is named when its address is different every run.
+ */
+static int g_nocond_lines = -1, g_nocond_line = -1, g_nocond_done;
+static int g_nocond_slot = -1;   /* and operand 0 must be this variable */
+
 static int      g_nodedump = -1;
 
 /*
@@ -516,7 +544,7 @@ static DWORD WINAPI scripttrace_window(LPVOID unused) {
  */
 static void focom_trace_extra(uint32_t va) {
     if (!g_scripttrace && !g_nolibtrace && !g_varpoke_on
-        && g_nodedump < 0) return;
+        && g_nodedump < 0 && g_nocond_lines < 0) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -538,7 +566,8 @@ static void focom_trace_extra(uint32_t va) {
         }
         return;
     }
-    if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0) return;
+    if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0
+        && g_nocond_lines < 0) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -592,6 +621,28 @@ static void focom_trace_extra(uint32_t va) {
                 vaddr = arr + (op & 0xFFFFu) * 4;
                 vval = T_OK(vaddr) ? MEM32(vaddr) : 0;
             }
+        }
+        /* Line count and line number alone are not an identity: this front
+         * end has several 25-line blocks and the first one reached got the
+         * patch. Operand 0's slot pins it -- for the "For CD" While that is
+         * variable 83, "Min CD Number". */
+        int nocond_here = !g_nocond_done && (int)n == g_nocond_lines
+                       && (int)ln == g_nocond_line && T_OK(args);
+        if (nocond_here && g_nocond_slot >= 0) {
+            uint32_t op0 = args + 0xC;
+            nocond_here = (int)((MEM32(args) >> 16) & 0x3Fu) - 3 > 0
+                       && T_OK(op0 + 8)
+                       && (MEM32(op0) & 0xF000u) == 0x1000u
+                       && (int)MEM32(op0 + 8) == g_nocond_slot;
+        }
+        if (nocond_here) {
+            uint32_t was = MEM32(args);
+            MEM32(args) = (was & ~0x003F0000u) | (3u << 16);
+            g_nocond_done = 1;
+            fprintf(stderr, "[nocond] block %08X line %d of %u:"
+                            " header %08X -> %08X, %d operands -> 0\n",
+                    g_ecx, (int)ln, n, was, MEM32(args),
+                    (int)((was >> 16) & 0x3Fu) - 3);
         }
         if (g_nodedump >= 0 && (int)ln == g_nodedump && T_OK(args)) {
             /* [entry+0x18] and not [entry+8]: While::Execute takes three
@@ -1487,6 +1538,11 @@ int main(int argc, char** argv) {
             g_vx_on = 1;
             g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
             g_vx_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
+        else if (!strcmp(argv[i], "--nocond") && i + 3 < argc) {
+            g_nocond_lines = (int)strtol(argv[++i], NULL, 0);
+            g_nocond_line = (int)strtol(argv[++i], NULL, 0);
+            g_nocond_slot = (int)strtol(argv[++i], NULL, 0);
         }
         else if (!strcmp(argv[i], "--nodedump") && i + 1 < argc)
             g_nodedump = (int)strtol(argv[++i], NULL, 0);
