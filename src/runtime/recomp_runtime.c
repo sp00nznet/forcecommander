@@ -332,9 +332,20 @@ static DWORD WINAPI windowlist(LPVOID unused) {
 static DWORD    g_tl_ms;
 static int      g_tl_on;
 
-static DWORD WINAPI threadlist(LPVOID unused) {
-    (void)unused;
-    Sleep(g_tl_ms);
+/*
+ * --threadwatch MS N: the same census, N times, running threads only.
+ *
+ * "Which page am I on" is a question the thread records answer better than
+ * the screen does, because the screen's text is not legible and the records
+ * have names. A thread with a compiled block and a context is live, so a
+ * snapshot every few seconds through a click chain is a timeline of the front
+ * end's state -- Opening Screen, then whatever New Player starts, then
+ * whatever Play starts.
+ */
+static DWORD g_tw_every;
+static unsigned g_tw_count;
+
+static void threadlist_once(int running_only) {
     uint32_t top = crt_heap_top();
     unsigned n = 0;
     /* A megabyte at a time with a yield between slices. Run flat out, the
@@ -360,13 +371,32 @@ static DWORD WINAPI threadlist(LPVOID unused) {
         }
         if (j < 1) continue;
         buf[j] = 0;
+        uint32_t lines = MEM32(blk + 0x1C), ctx = MEM32(a + 0x20);
+        if (running_only && (ctx == 0xFFFFFFFFu || lines == 0)) continue;
         fprintf(stderr, "[thread] %-32s block=%08X lines=%-5u container=%08X"
                         " index=%-5u ctx=%08X\n",
-                buf, blk, MEM32(blk + 0x1C), MEM32(a + 0xC),
-                MEM32(a + 0x1C), MEM32(a + 0x20));
+                buf, blk, lines, MEM32(a + 0xC),
+                MEM32(a + 0x1C), ctx);
         n++;
     }
     fprintf(stderr, "[thread] %u script threads (heap to %08X)\n", n, top);
+}
+
+static DWORD WINAPI threadlist(LPVOID unused) {
+    (void)unused;
+    Sleep(g_tl_ms);
+    threadlist_once(0);
+    return 0;
+}
+
+static DWORD WINAPI threadwatch(LPVOID unused) {
+    (void)unused;
+    for (unsigned k = 0; k < g_tw_count; k++) {
+        Sleep(g_tw_every);
+        fprintf(stderr, "[thread] --- snapshot %u at %lu ms\n",
+                k + 1, (unsigned long)g_tw_every * (k + 1));
+        threadlist_once(1);
+    }
     return 0;
 }
 
@@ -1553,6 +1583,10 @@ int main(int argc, char** argv) {
             g_wl_on = 1;
             g_wl_ms = (DWORD)strtoul(argv[++i], NULL, 0);
         }
+        else if (!strcmp(argv[i], "--threadwatch") && i + 2 < argc) {
+            g_tw_every = (DWORD)strtoul(argv[++i], NULL, 0);
+            g_tw_count = (unsigned)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--threadlist") && i + 1 < argc) {
             g_tl_on = 1;
             g_tl_ms = (DWORD)strtoul(argv[++i], NULL, 0);
@@ -1595,6 +1629,8 @@ int main(int argc, char** argv) {
     if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
         if (g_tl_on)
             CloseHandle(CreateThread(NULL, 0, threadlist, NULL, 0, NULL));
+        if (g_tw_count)
+            CloseHandle(CreateThread(NULL, 0, threadwatch, NULL, 0, NULL));
         if (g_wl_on)
             CloseHandle(CreateThread(NULL, 0, windowlist, NULL, 0, NULL));
         if (g_st_from) CloseHandle(CreateThread(NULL, 0,

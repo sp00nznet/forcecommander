@@ -1163,6 +1163,15 @@ void ddraw_key(unsigned scancode, int down) {
 
 static void dev_GetDeviceState(void) {
     uint32_t n = ARG(1), p = ARG(2);
+    /* Once per size: 16 or 24 is a mouse, 256 a keyboard, and whether the
+     * game ever asks for a keyboard at all decides whether typing has to go
+     * through this or through the window procedure. */
+    { static uint32_t seen[8]; static unsigned ns; int fresh = 1;
+      for (unsigned k = 0; k < ns; k++) if (seen[k] == n) fresh = 0;
+      if (fresh && ns < 8) {
+          seen[ns++] = n;
+          fprintf(stderr, "[di] GetDeviceState size %u\n", n);
+      } }
     if (p && n && n < 0x10000)
         memset((void*)(uintptr_t)ADDR(p), 0, n);
     if (p && (n == 16 || n == 24)) {
