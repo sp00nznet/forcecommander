@@ -430,6 +430,12 @@ static LRESULT CALLBACK win_trampoline(HWND h, UINT m, WPARAM w, LPARAM l) {
         va = class_proc(cn);
         if (va) win_bind(h, va);
     }
+    if (m == WM_MOUSEMOVE || m == WM_LBUTTONDOWN || m == WM_LBUTTONUP) {
+        static unsigned n;
+        if (n++ < 12)
+            fprintf(stderr, "[wp] msg 0x%04X l=%08X hwnd=%p va=0x%08X\n",
+                    m, (uint32_t)l, (void*)h, va);
+    }
     recomp_func_t f = va ? recomp_lookup(va) : NULL;
     if (!f) return DefWindowProcA(h, m, w, l);
 

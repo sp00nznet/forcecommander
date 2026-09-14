@@ -627,6 +627,16 @@ static struct { int x, y; } g_click[CLICK_MAX];  /* --click X Y, repeatable */
 static unsigned g_click_n;
 static DWORD g_click_ms = 20000;                 /* --clickat MS */
 static DWORD g_click_gap = 2500;                 /* --clickgap MS */
+static double g_click_scale = 1.0;               /* --mousescale N */
+#define KEY_MAX 8
+static unsigned g_key[KEY_MAX];                  /* --key VK, repeatable */
+static unsigned g_key_n;
+static unsigned g_click_taps = 1;                /* --taps N */
+static DWORD    g_click_hold = 300;              /* --hold MS */
+static long   g_mouse_at_x, g_mouse_at_y;        /* where we last aimed */
+void ddraw_mouse_move(long dx, long dy);         /* ddraw_shims.c */
+void ddraw_mouse_button(int down);               /* ddraw_shims.c */
+void ddraw_uimap_reset(void);                    /* ddraw_shims.c */
 
 /*
  * --click X Y: press the left button at a client position, once.
@@ -658,15 +668,61 @@ static DWORD WINAPI clicker(LPVOID unused) {
      * win_trampoline within a frame. */
     HWND h = (HWND)win_main_hwnd();
     if (!h) { fprintf(stderr, "[click] no game window\n"); return 0; }
+    /* Home the cursor into the top-left corner first. The device is relative,
+     * so there is no absolute position to set: the only way to a known place
+     * is a delta big enough to clamp, then a delta out to the target. One
+     * delta per frame, because the poller drains the device every frame. */
+    for (int k = 0; k < 30; k++) { ddraw_mouse_move(-4000, -4000); Sleep(40); }
+
     for (unsigned k = 0; k < g_click_n; k++) {
         LPARAM pos = (LPARAM)((g_click[k].y << 16) | (g_click[k].x & 0xFFFF));
+            if (k == 0) {
+            /* Tell the game it is active first. A window that never got
+             * WM_ACTIVATEAPP is one a 1999 title is entitled to assume is in
+             * the background, and background input is exactly what a
+             * DirectInput foreground-exclusive device is supposed to drop. */
+            PostMessageA(h, WM_ACTIVATEAPP, TRUE, 0);
+            PostMessageA(h, WM_ACTIVATE, WA_ACTIVE, 0);
+            PostMessageA(h, WM_SETFOCUS, 0, 0);
+            PostMessageA(h, WM_NCACTIVATE, TRUE, 0);
+            Sleep(500);
+        }
+        ddraw_uimap_reset();
         fprintf(stderr, "[click] #%u at %d,%d (window %p)\n",
                 k + 1, g_click[k].x, g_click[k].y, (void*)h);
+        /* Window messages too: the procedure ignores the mouse ones, but
+         * costing nothing and being the real path if that ever changes. */
         PostMessageA(h, WM_MOUSEMOVE, 0, pos);
-        Sleep(250);
-        PostMessageA(h, WM_LBUTTONDOWN, MK_LBUTTON, pos);
-        Sleep(250);
-        PostMessageA(h, WM_LBUTTONUP, 0, pos);
+        /* And the device, which is what the game actually reads. Relative, so
+         * move from wherever the last click left it. */
+        ddraw_mouse_move((long)(g_click[k].x * g_click_scale) - g_mouse_at_x,
+                         (long)(g_click[k].y * g_click_scale) - g_mouse_at_y);
+        g_mouse_at_x = (long)(g_click[k].x * g_click_scale);
+        g_mouse_at_y = (long)(g_click[k].y * g_click_scale);
+        Sleep(400);
+        /* A press and a release, g_click_taps times. One selects the item and
+         * shows its description; whether one also activates it has not been
+         * settled, so this is adjustable rather than assumed. */
+        for (unsigned tap = 0; tap < g_click_taps; tap++) {
+            PostMessageA(h, WM_LBUTTONDOWN, MK_LBUTTON, pos);
+            ddraw_mouse_button(1);
+            Sleep(g_click_hold);
+            PostMessageA(h, WM_LBUTTONUP, 0, pos);
+            ddraw_mouse_button(0);
+            if (tap + 1 < g_click_taps) Sleep(g_click_hold);
+        }
+        Sleep(g_click_gap);
+    }
+    /* Keys after the clicks. The game's window procedure dispatches messages
+     * 7..0x100 and 0x101, which is WM_KEYDOWN and WM_KEYUP -- unlike the mouse
+     * messages, which fall to DefWindowProc. So a key is a path the procedure
+     * demonstrably takes. */
+    for (unsigned k = 0; k < g_key_n; k++) {
+        ddraw_uimap_reset();
+        fprintf(stderr, "[key] 0x%02X\n", g_key[k]);
+        PostMessageA(h, WM_KEYDOWN, g_key[k], 1);
+        Sleep(g_click_hold);
+        PostMessageA(h, WM_KEYUP, g_key[k], 0xC0000001u);
         Sleep(g_click_gap);
     }
     fprintf(stderr, "[click] done\n");
@@ -789,6 +845,14 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--uimap")) ddraw_set_uimap();
         else if (!strcmp(argv[i], "--clickgap") && i + 1 < argc)
             g_click_gap = (DWORD)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--mousescale") && i + 1 < argc)
+            g_click_scale = strtod(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--key") && i + 1 < argc && g_key_n < KEY_MAX)
+            g_key[g_key_n++] = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--taps") && i + 1 < argc)
+            g_click_taps = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--hold") && i + 1 < argc)
+            g_click_hold = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--nowait")) g_nowait = 1;
         else if (!strcmp(argv[i], "--waittrace")) g_waittrace = 1;
         else if (!strcmp(argv[i], "--nothreads")) g_no_threads = 1;
@@ -807,7 +871,7 @@ int main(int argc, char** argv) {
     AddVectoredExceptionHandler(1, veh);
     mach_init();
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
-    if (g_click_n)
+    if (g_click_n || g_key_n)
         CloseHandle(CreateThread(NULL, 0, clicker, NULL, 0, NULL));
 
     printf("Force Commander recomp host\n");

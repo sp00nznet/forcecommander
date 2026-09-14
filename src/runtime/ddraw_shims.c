@@ -182,6 +182,8 @@ static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
  * PATH.N.bmp. See ddraw_dump_surface. */
 static int g_uimap;
 void ddraw_set_uimap(void) { g_uimap = 1; }
+static unsigned g_uimap_epoch;
+void ddraw_uimap_reset(void) { g_uimap_epoch++; }
 #define DUMP_PRESENTS 5
 static const char* g_dump_path;
 void ddraw_set_dumpframe(const char* p) { g_dump_path = p; }
@@ -1100,20 +1102,47 @@ static void dev_GetCapabilities(void) {
 }
 
 /*
- * No input: zero the buffer. A device that answers cleanly with nothing
- * pressed is what lets the game run its own loop.
+ * The mouse, as a device rather than as a message.
  *
- * Synthetic input used to be fed in here, as DIMOUSESTATE deltas -- home the
- * cursor into a corner with a large negative delta, walk it out to a known
- * position, then set rgbButtons[0]. It fired, and the front end did not move a
- * pixel: the game does not take its cursor from this device. Input goes
- * through the window procedure, so --click posts real window messages now.
- * See host_input() in recomp_runtime.c.
+ * The game's own window procedure (sub_00665D10 -> sub_00665500) dispatches
+ * messages 7..0x100, 0x101, and 0x102..0x112 and sends everything else to
+ * DefWindowProc. WM_MOUSEMOVE is 0x200 and WM_LBUTTONDOWN is 0x201, so they
+ * are in none of those ranges: posting real mouse messages reaches the
+ * procedure and the procedure throws them away. The mouse is DirectInput
+ * only, and this is the device.
+ *
+ * sub_006794F0 is the poller, and its shape dictates the model here. It calls
+ * GetDeviceState(0x10, ...) in a LOOP, accumulating lX/lY/lZ, and only stops
+ * when a read comes back with all three deltas zero and the button bytes
+ * unchanged from the previous read. So a device that keeps returning the same
+ * non-zero delta is drained dozens of times in one frame.
+ *
+ * Which means the honest model is a real one: a delta is pending until it is
+ * read ONCE, and the buttons are a state that persists until changed. Then a
+ * queued move is consumed in a single frame and the next read exits the loop,
+ * exactly as hardware would.
+ *
+ * The accumulated delta is divided by a sensitivity at [obj+0x2C] before it
+ * moves the cursor, so --dimouse takes device units and not pixels, and
+ * --uimap is how the result is read back: the cursor is a 51x51 quad and its
+ * rectangle in the map says where the game thinks it is.
  */
+static long    g_mouse_dx, g_mouse_dy;   /* pending, consumed by one read */
+static uint8_t g_mouse_btn;              /* button state, persistent */
+
+void ddraw_mouse_move(long dx, long dy) { g_mouse_dx += dx; g_mouse_dy += dy; }
+void ddraw_mouse_button(int down) { g_mouse_btn = down ? 0x80 : 0; }
+
 static void dev_GetDeviceState(void) {
     uint32_t n = ARG(1), p = ARG(2);
     if (p && n && n < 0x10000)
         memset((void*)(uintptr_t)ADDR(p), 0, n);
+    if (p && n >= 16) {
+        MEM32(p + 0) = (uint32_t)g_mouse_dx;
+        MEM32(p + 4) = (uint32_t)g_mouse_dy;
+        g_mouse_dx = g_mouse_dy = 0;
+        MEM8(p + 12) = g_mouse_btn;
+    }
     RET(DI_OK); STDRET(3);
 }
 
@@ -2339,44 +2368,59 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
     st.z_func = g_d3d_rs[23] ? (int)g_d3d_rs[23] : 4;
 
     /*
-     * --uimap: the screen rectangle of every UI batch, once.
+     * --uimap: every distinct UI rectangle the run ever draws, once each.
      *
-     * Clicking a menu blind is guesswork, and guesswork cost a run per
-     * attempt. The draws know where the buttons are: a 2D batch's transformed
-     * bounding box IS its hot rectangle, near enough to aim at. One frame's
-     * worth, printed once, turns --click into something with coordinates
-     * behind it.
+     * A 2D batch's transformed bounding box IS its hot rectangle, near enough
+     * to aim at, and the draws know where the buttons are even when the text
+     * is not legible -- which it is not, on the pages past the first. Printing
+     * each new rectangle as it appears turns one run with a click chain into
+     * the layout of every page it passed through, interleaved with the
+     * [click] lines that caused them.
+     *
+     * Deduped on the rectangle quantised to two pixels, because the same
+     * button is redrawn every frame and a glyph run wobbles by a fraction.
      */
-    if (g_uimap && (fvf & 0x40u) && g_d3d_prims > 60000u) {
-        static unsigned n;
-        if (n < 400) {
-            uint32_t stv = raster_stride(fvf);
-            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-            for (uint32_t k = 0; k < nvert; k++) {
-                const float* f =
-                    (const float*)(uintptr_t)ADDR(verts + k * stv);
-                float ox, oy, ow;
-                if (fvf & 0x4u) { ox = f[0]; oy = f[1]; ow = 1.0f; }
-                else {
-                    ox = f[0]*wvp[0] + f[1]*wvp[4] + f[2]*wvp[8]  + wvp[12];
-                    oy = f[0]*wvp[1] + f[1]*wvp[5] + f[2]*wvp[9]  + wvp[13];
-                    ow = f[0]*wvp[3] + f[1]*wvp[7] + f[2]*wvp[11] + wvp[15];
-                    if (ow <= 0.0001f) continue;
-                    ox = (ox / ow * 0.5f + 0.5f) * (float)vp[2];
-                    oy = (0.5f - oy / ow * 0.5f) * (float)vp[3];
-                }
-                if (ox < x0) x0 = ox;
-                if (ox > x1) x1 = ox;
-                if (oy < y0) y0 = oy;
-                if (oy > y1) y1 = oy;
+    if (g_uimap && (fvf & 0x40u)) {
+        uint32_t stv = raster_stride(fvf);
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        for (uint32_t k = 0; k < nvert; k++) {
+            const float* f = (const float*)(uintptr_t)ADDR(verts + k * stv);
+            float ox, oy, ow;
+            if (fvf & 0x4u) { ox = f[0]; oy = f[1]; }
+            else {
+                ox = f[0]*wvp[0] + f[1]*wvp[4] + f[2]*wvp[8]  + wvp[12];
+                oy = f[0]*wvp[1] + f[1]*wvp[5] + f[2]*wvp[9]  + wvp[13];
+                ow = f[0]*wvp[3] + f[1]*wvp[7] + f[2]*wvp[11] + wvp[15];
+                if (ow <= 0.0001f) continue;
+                ox = (ox / ow * 0.5f + 0.5f) * (float)vp[2];
+                oy = (0.5f - oy / ow * 0.5f) * (float)vp[3];
             }
-            if (x1 >= x0)
-                fprintf(stderr, "[uimap] %3.0f,%3.0f  %3.0fx%3.0f  centre"
-                                " %3.0f,%3.0f  tex=0x%08X nv=%u\n",
+            if (ox < x0) x0 = ox;
+            if (ox > x1) x1 = ox;
+            if (oy < y0) y0 = oy;
+            if (oy > y1) y1 = oy;
+        }
+        static uint32_t seen[512];
+        static unsigned seen_n, seen_epoch;
+        if (x1 > x0 + 3.0f && y1 > y0 + 3.0f && x0 > -100.0f && y0 > -100.0f) {
+            uint32_t key = ((((uint32_t)(int)(x0 / 2) & 0x1FFu)) << 23)
+                         | ((((uint32_t)(int)(y0 / 2) & 0x1FFu)) << 14)
+                         | ((((uint32_t)(int)((x1 - x0) / 2) & 0x7Fu)) << 7)
+                         |   (((uint32_t)(int)((y1 - y0) / 2) & 0x7Fu));
+            /* Reset by the clicker before each click, so a page whose rows
+             * land on the same four y values as the last one still prints:
+             * a global dedupe hid every item of every page after the first. */
+            if (g_uimap_epoch != seen_epoch) { seen_epoch = g_uimap_epoch; seen_n = 0; }
+            int fresh = 1;
+            for (unsigned k = 0; k < seen_n; k++)
+                if (seen[k] == key) { fresh = 0; break; }
+            if (fresh && seen_n < 512) {
+                seen[seen_n++] = key;
+                fprintf(stderr, "[uimap] %3.0f,%3.0f %3.0fx%2.0f  centre"
+                                " %3.0f,%3.0f  nv=%u\n",
                         x0, y0, x1 - x0, y1 - y0,
-                        (x0 + x1) / 2.0f, (y0 + y1) / 2.0f,
-                        g_d3d_tex[0], nvert);
-            n++;
+                        (x0 + x1) / 2.0f, (y0 + y1) / 2.0f, nvert);
+            }
         }
     }
 
