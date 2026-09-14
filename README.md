@@ -463,13 +463,18 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Commit a player name.** The gate is open: `--nocond 25 3 83` forces the
-   disc wait's condition false and the front end navigates. Single Player
-   gives SELECT PLAYER NAME, New Player gives ENTER PLAYER NAME with a caret,
-   typing grows the field, and the list row selects. What does not happen is
-   the player being created -- `Resource/Players` stays empty and the forward
-   arrow reports "No Name Selected". After that come SINGLE PLAYER
-   (Campaign / Skirmish / Scenario / Load Saved) and a mission.
+1. **Get a keystroke into the name field.** The gate is open: `--nocond
+   25 3 83` forces the disc wait's condition false and the front end
+   navigates -- Single Player gives SELECT PLAYER NAME, New Player gives
+   ENTER PLAYER NAME with a caret, and a list row selects. But no typed
+   character reaches the field: three characters grew the text run from 68 to
+   99 pixels and ten grew it to 50, so the width was the colour animation and
+   not the name. `Resource/Players` stays empty and the forward arrow says
+   "No Name Selected", which is the truth. WM_KEYDOWN/WM_CHAR/WM_KEYUP to the
+   game's own pumping window, a real DirectInput scan-code array, and a
+   synthetic GetKeyState have all been tried; GetKeyboardState and
+   GetAsyncKeyState are not imported. Logging every key message that reaches
+   the pump is the next step.
 2. **The text, because it is now the bottleneck.** Every step above was found
    by clicking a `--uimap` rectangle and reading the result out of rectangle
    *widths*: the glyphs land in the right places with the wrong glyph or none,

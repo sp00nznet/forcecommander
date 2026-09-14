@@ -1082,11 +1082,36 @@ click 110,187                      -> the row selects: a 464x42 bar at 77,169
 click 625,305   Play               -> nothing further
 ```
 
-So the page changes, the field takes characters, and the row selects. What has
-not happened is the player being committed: `Resource/Players` stays empty and
-the forward arrow from the player page reports **"No Name Selected"**, so the
-confirm on the name page is the next thing to find. After it come SINGLE
-PLAYER (Campaign / Skirmish / Scenario / Load Saved) and then a mission.
+So the page changes and the row selects. What does NOT happen is the field
+taking characters, and that is the finding -- an earlier reading of it was
+wrong.
+
+Typing three characters made the run at `80,180` grow from 68 to 99 pixels,
+which looked like the field filling. Typing **ten** made it 50 pixels. The
+width was the text animation all along: **no typed character reaches the name
+field.** `Resource/Players` stays empty and the forward arrow reports "No Name
+Selected", which is consistent -- the name really is blank.
+
+Everything reasonable has been tried and measured:
+
+- `WM_KEYDOWN` + the `WM_CHAR` `TranslateMessage` would have produced +
+  `WM_KEYUP`, posted to the game's own window with the right scan code in
+  `lParam`. That window belongs to a Ronin worker which pumps it every frame,
+  and `PeekMessageA`/`GetMessageA`/`DispatchMessageA` are all real.
+- The **DirectInput keyboard**, with a real 256-byte scan-code array. Measured
+  not to matter: `GetDeviceState` is only ever called with a size of 16, which
+  is `DIMOUSESTATE`, so the game never reads a keyboard through DirectInput.
+- **`GetKeyState`**, which used to forward to the host and therefore always
+  answered "not pressed", because `--key` posts messages rather than injecting
+  real input. It answers from a synthetic virtual-key array now.
+- `GetKeyboardState` and `GetAsyncKeyState` are not imported by this binary at
+  all, so they are not the path either.
+
+What is left to measure is whether the key messages are being **dispatched**:
+`DispatchMessageA` is logged for its first four calls and the four are 0x031F,
+0xC0CF, 0x000F and 0x0113 -- none of them a key. Logging every 0x100..0x112
+that reaches the pump is the next step, and if they are arriving then the
+game's own procedure is discarding them the way it discards the mouse.
 
 Two things would make that much faster than it has been, and both are known:
 

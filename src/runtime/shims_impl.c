@@ -782,7 +782,18 @@ static void u32_TranslateMessage(void) {
 static void u32_DispatchMessageA(void) {
     MSG m; msg_in(ARG(0), &m);
     RET((uint32_t)(int32_t)DispatchMessageA(&m)); STDRET(1);
-    { static unsigned n; if (n++ < 4) fprintf(stderr, "[user32] DispatchMessageA #%u msg 0x%04X\n", n, m.message); }
+    /* Every KEY message, as well as the first four of anything. Whether a
+     * posted WM_KEYDOWN actually reaches the pump is the difference between
+     * "the game discards it" and "it never arrived", and those need opposite
+     * fixes. */
+    { static unsigned n, k;
+      if (n++ < 4)
+          fprintf(stderr, "[user32] DispatchMessageA #%u msg 0x%04X\n",
+                  n, m.message);
+      if (m.message >= 0x100 && m.message <= 0x112 && k++ < 40)
+          fprintf(stderr, "[user32] key msg 0x%04X wp=%08X lp=%08X hwnd=%p\n",
+                  m.message, (unsigned)m.wParam, (unsigned)m.lParam,
+                  (void*)m.hwnd); }
 }
 extern unsigned g_wait_scale;      /* --waitscale, crt_shims.c */
 
