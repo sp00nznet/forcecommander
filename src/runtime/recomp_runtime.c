@@ -186,6 +186,23 @@ static unsigned g_nocond_n;
  * failing check runs the proceeding path anyway. Which is a cheat, and says
  * so; what it buys is seeing what is behind the gate.
  */
+/*
+ * --varat LINES LINE SLOT VALUE: write one variable at one line.
+ *
+ * --varpoke pins a slot wherever any block reads it, which is far too broad
+ * for a slot the whole front end shares: pinning slot 12 -- the result of
+ * "Check That Name Exists" -- segfaulted the game in sixty-three writes. The
+ * useful form is surgical, at the one line that reads the result and nowhere
+ * else, so the check can be answered without changing what the check itself
+ * does.
+ *
+ * ponytail: written every time that line runs, no restore. It is a cheat for
+ * finding out what is behind a gate.
+ */
+#define VARAT_MAX 8
+static struct { int lines, line, slot; uint32_t val; } g_varat[VARAT_MAX];
+static unsigned g_varat_n;
+
 #define JUMPTO_MAX 8
 static struct { int lines, line, slot, target, done; } g_jumpto[JUMPTO_MAX];
 static unsigned g_jumpto_n;
@@ -594,7 +611,8 @@ static DWORD WINAPI scripttrace_window(LPVOID unused) {
  */
 static void focom_trace_extra(uint32_t va) {
     if (!g_scripttrace && !g_nolibtrace && !g_varpoke_on
-        && g_nodedump < 0 && !g_nocond_n && !g_jumpto_n) return;
+        && g_nodedump < 0 && !g_nocond_n && !g_jumpto_n
+        && !g_varat_n) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -617,7 +635,7 @@ static void focom_trace_extra(uint32_t va) {
         return;
     }
     if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0
-        && !g_nocond_n && !g_jumpto_n) return;
+        && !g_nocond_n && !g_jumpto_n && !g_varat_n) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -677,6 +695,22 @@ static void focom_trace_extra(uint32_t va) {
          * patch. Operand 0's slot pins it -- for the "For CD" While that is
          * variable 83, "Min CD Number". A slot of -1 means "any". Repeatable,
          * because a flow can have more than one gate in it. */
+        for (unsigned q = 0; q < g_varat_n && T_OK(ctx); q++) {
+            if ((int)n != g_varat[q].lines || (int)ln != g_varat[q].line)
+                continue;
+            uint32_t owner = MEM32(ctx + 0x14);
+            uint32_t arr = T_OK(owner) ? MEM32(owner + 0x18) : 0;
+            if (!T_OK(arr)) continue;
+            uint32_t va2 = arr + (uint32_t)g_varat[q].slot * 4;
+            if (!T_OK(va2) || MEM32(va2) == g_varat[q].val) continue;
+            { static unsigned m;
+              if (m++ < 8)
+                  fprintf(stderr, "[varat] block %08X line %d of %u:"
+                                  " slot %d at %08X %08X -> %08X\n",
+                          g_ecx, (int)ln, n, g_varat[q].slot, va2,
+                          MEM32(va2), g_varat[q].val); }
+            MEM32(va2) = g_varat[q].val;
+        }
         for (unsigned q = 0; q < g_jumpto_n && T_OK(args); q++) {
             if (g_jumpto[q].done) continue;
             if ((int)n != g_jumpto[q].lines || (int)ln != g_jumpto[q].line)
@@ -1650,6 +1684,14 @@ int main(int argc, char** argv) {
             g_vx_on = 1;
             g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
             g_vx_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
+        else if (!strcmp(argv[i], "--varat") && i + 4 < argc
+                 && g_varat_n < VARAT_MAX) {
+            g_varat[g_varat_n].lines = (int)strtol(argv[++i], NULL, 0);
+            g_varat[g_varat_n].line = (int)strtol(argv[++i], NULL, 0);
+            g_varat[g_varat_n].slot = (int)strtol(argv[++i], NULL, 0);
+            g_varat[g_varat_n].val = (uint32_t)strtoul(argv[++i], NULL, 0);
+            g_varat_n++;
         }
         else if (!strcmp(argv[i], "--jumpto") && i + 4 < argc
                  && g_jumpto_n < JUMPTO_MAX) {
