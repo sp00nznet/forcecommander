@@ -996,6 +996,133 @@ static DWORD WINAPI lifted_thread(LPVOID p) {
     return rc;
 }
 
+/*
+ * The multimedia timer, delivered.
+ *
+ * timeSetEvent used to return an id and never call anything back, with the
+ * note that the callback is lifted code and the single machine state rules
+ * out running it on a host thread. That was wrong: it is exactly what
+ * CreateThread already does. A host thread with its own target stack, its own
+ * TIB and its own saved machine state claims the machine, runs lifted code
+ * and releases it, and the global lock serialises it against every other
+ * thread the same way.
+ *
+ * It matters because iMUSE runs on this timer -- the exe carries the string
+ * "iMUSE timer bug encountered, if you get sound this time, please note it in
+ * the bug db." next to its timeSetEvent error paths -- so with no tick, the
+ * music script never advances. Measured before this: the front end's story
+ * and music state word at 0x00883CA8 never changed from STATE_NULL in a whole
+ * run, through the opening screen and a click, and every one of its 63 states
+ * is named in the exe.
+ *
+ * TimeProc is stdcall with five dwords: (uID, uMsg, dwUser, dw1, dw2).
+ *
+ * ponytail: Sleep for the period, which drifts and cannot beat the host's
+ * scheduler granularity. A waitable timer is the upgrade if something turns
+ * out to care about jitter rather than about being called at all.
+ */
+#define MM_TIMER_MAX 8
+
+typedef struct {
+    recomp_func_t fn;
+    uint32_t id, user, period;
+    int      periodic;
+    uint32_t stack_top, tib;
+    volatile long stop;
+} mm_timer;
+
+static mm_timer* g_mm_timer[MM_TIMER_MAX];
+
+/* One target stack and TIB, laid out the way k32_CreateThread lays out its
+ * own. Returns 0 if there is no room left. */
+static uint32_t mach_stack_new(uint32_t* tib_out) {
+    long n = InterlockedIncrement(&g_mach_threads) - 1;
+    if (n >= MACH_MAX_THREADS) return 0;
+    uint32_t base = MACH_STACK_BASE + (uint32_t)n * MACH_STACK_SIZE;
+    if (!VirtualAlloc((void*)(uintptr_t)base, MACH_STACK_SIZE,
+                      MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE))
+        return 0;
+    uint32_t tib = crt_alloc(0x1000);
+    memset((void*)(uintptr_t)ADDR(tib), 0, 0x1000);
+    MEM32(tib + 0x00) = 0xFFFFFFFFu;                 /* SEH: end of chain */
+    MEM32(tib + 0x04) = base + MACH_STACK_SIZE;      /* stack base */
+    MEM32(tib + 0x08) = base;                        /* stack limit */
+    MEM32(tib + 0x18) = tib;
+    *tib_out = tib;
+    return base + MACH_STACK_SIZE - 0x100;
+}
+
+static DWORD WINAPI mm_timer_thread(LPVOID p) {
+    mm_timer* t = (mm_timer*)p;
+    mstate* m = (mstate*)calloc(1, sizeof *m);
+    if (!m) return 1;
+    m->esp = t->stack_top;
+    m->fpu_cw = 0x037F;
+    m->fs_base = t->tib;
+    m->depth = 0;                    /* so the first claim LOADS this state */
+    TlsSetValue(g_mach_tls, m);
+
+    do {
+        Sleep(t->period ? t->period : 1);
+        if (t->stop) break;
+        mach_enter();
+        PUSH32(g_esp, 0);            /* dw2 */
+        PUSH32(g_esp, 0);            /* dw1 */
+        PUSH32(g_esp, t->user);      /* dwUser */
+        PUSH32(g_esp, 0);            /* uMsg */
+        PUSH32(g_esp, t->id);        /* uID */
+        PUSH32(g_esp, RECOMP_RETADDR);
+        t->fn();
+        mach_leave();
+    } while (t->periodic && !t->stop);
+
+    TlsSetValue(g_mach_tls, NULL);
+    free(m);
+    return 0;
+}
+
+/* timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent). fuEvent bit
+ * 0 is TIME_PERIODIC; the callback-kind bits (2..5) are all
+ * TIME_CALLBACK_FUNCTION here, which is the only kind this handles. */
+uint32_t mm_timer_create(uint32_t delay, uint32_t proc, uint32_t user,
+                         uint32_t flags) {
+    recomp_func_t fn = recomp_lookup(proc);
+    unsigned slot;
+    for (slot = 0; slot < MM_TIMER_MAX; slot++) if (!g_mm_timer[slot]) break;
+    if (!fn || g_no_threads || slot == MM_TIMER_MAX) {
+        fprintf(stderr, "[mm] timeSetEvent(%u ms, proc=0x%08X) -- NOT run"
+                        " (%s)\n", delay, proc,
+                !fn ? "not lifted" : g_no_threads ? "--nothreads" : "no slot");
+        return 0;
+    }
+    mm_timer* t = (mm_timer*)calloc(1, sizeof *t);
+    if (!t) return 0;
+    t->stack_top = mach_stack_new(&t->tib);
+    if (!t->stack_top) { free(t); return 0; }
+    t->fn = fn;
+    t->id = slot + 1;
+    t->user = user;
+    t->period = delay;
+    t->periodic = (flags & 1u) != 0;
+    g_mm_timer[slot] = t;
+    HANDLE th = CreateThread(NULL, 0, mm_timer_thread, t, 0, NULL);
+    if (th) CloseHandle(th);
+    fprintf(stderr, "[mm] timeSetEvent(%u ms, proc=0x%08X, user=0x%08X,"
+                    " %s) -> id %u\n",
+            delay, proc, user, t->periodic ? "periodic" : "one-shot", t->id);
+    return t->id;
+}
+
+void mm_timer_kill(uint32_t id) {
+    if (id == 0 || id > MM_TIMER_MAX) return;
+    mm_timer* t = g_mm_timer[id - 1];
+    if (!t) return;
+    /* Leaked deliberately: the thread may be inside the callback, and the
+     * struct is what it is reading. One per timer, eight at most. */
+    t->stop = 1;
+    g_mm_timer[id - 1] = NULL;
+}
+
 static void k32_CreateThread(void) {
     uint32_t start = ARG(2), param = ARG(3);
     recomp_func_t fn = recomp_lookup(start);

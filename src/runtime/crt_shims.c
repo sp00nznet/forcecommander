@@ -789,18 +789,16 @@ static void mm_timeGetDevCaps(void) {
     }
     RET(0); STDRET(2);
 }
+uint32_t mm_timer_create(uint32_t delay, uint32_t proc, uint32_t user,
+                         uint32_t flags);                  /* shims_impl.c */
+void mm_timer_kill(uint32_t id);                           /* shims_impl.c */
+
 static void mm_timeSetEvent(void) {
-    /*
-     * ponytail: the timer is never delivered. The callback is lifted code and
-     * would have to run on a host timer thread, which the single machine state
-     * rules out for the same reason CreateThread does. A non-zero id is
-     * returned because 0 means "could not create the timer", and the game
-     * treats that as a fatal audio error rather than as a missing tick.
-     */
-    static uint32_t next_id = 1;
-    RET(next_id++); STDRET(5);
+    /* The callback really runs now -- see mm_timer_create. 0 means "could not
+     * create the timer", which the game treats as a fatal audio error. */
+    RET(mm_timer_create(ARG(0), ARG(2), ARG(3), ARG(4))); STDRET(5);
 }
-static void mm_timeKillEvent(void) { (void)ARG(0); RET(0); STDRET(1); }
+static void mm_timeKillEvent(void) { mm_timer_kill(ARG(0)); RET(0); STDRET(1); }
 static void mm_PlaySoundA(void)    { RET(1); STDRET(3); }
 static void mm_mciSendStringA(void) {
     /* The game drives CD audio through MCI ("open cdaudio", "play cdaudio
