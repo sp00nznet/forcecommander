@@ -430,7 +430,13 @@ static void focom_trace_extra(uint32_t va) {
                             " args=%08X extra=%08X count=%d:",
                     g_ecx, (int)ln, n, args, extra,
                     T_OK(extra) ? (int)(((MEM32(extra) >> 16) & 0x3Fu)) - 3 : -99);
-            for (int k = 0; k < 0x20; k += 4)
+            /* 0xC + 24 operands * 12 bytes covers the widest line seen.
+             * Each operand is [word][0][slot] and the word is
+             * [decl index:16][kind:4][subsystem id:12] -- the decl index is
+             * what tools/gtxvars.py turns into a name. */
+            int cnt = T_OK(extra) ? (int)((MEM32(extra) >> 16) & 0x3Fu) - 3 : 0;
+            (void)cnt;
+            for (int k = 0; k < 0x60; k += 4)
                 fprintf(stderr, " %08X", MEM32(args + k));
             fprintf(stderr, " |");
             for (int k = 0; T_OK(extra) && k < 0x30; k += 4)
