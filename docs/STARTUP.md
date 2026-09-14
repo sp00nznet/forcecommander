@@ -558,20 +558,102 @@ format from the `DDPIXELFORMAT` the game passed to `CreateSurface`, and
 `Clear` also ignored `D3DCLEAR_ZBUFFER`, so the depth buffer held the previous
 frame's depths.
 
+## The menu, and input
+
+### Alpha comes from the texture, not the vertex diffuse
+
+One value explains the whole front end. It draws its menu with a vertex
+diffuse of **0x00FC0000** -- a real red, and an alpha of **zero** -- against
+`ALPHAOP = MODULATE, ALPHAARG1 = TEXTURE, ALPHAARG2 = CURRENT`. Reading that
+literally, alpha = texture x diffuse, multiplies every glyph by zero, and with
+the alpha test the game also sets ("greater than 0") the whole menu is
+discarded: **6 of 500 UI draws painted anything**, and the panel was an empty
+black rectangle with a border.
+
+Treating stage 0's CURRENT alpha as opaque puts the menu on the screen:
+
+```
+Single Player
+Multiplayer
+View Installation
+Show Credits
+```
+
+The ceiling is recorded in `raster.c`: the diffuse alpha is now ignored
+everywhere, and the right shape is a real texture-stage evaluator.
+
+### There were two windows
+
+Clicking that menu did nothing for a long time, and the reason was not the
+click.
+
+The host makes a window at startup, because something has to exist before the
+game does anything. The game then makes its own through `CreateWindowExA`,
+which `shims_impl.c` binds to its real window procedure through
+`win_trampoline`. Windows delivers `WM_MOUSEMOVE` and `WM_LBUTTONDOWN` to
+whichever window the pointer is over -- the host's, whose procedure did not
+know the game existed. **Pixels went to one window and input to the other.**
+
+Three things were tried, and the order is the useful part:
+
+- **DirectInput.** `DIMOUSESTATE` deltas, homed into a corner with a large
+  negative delta and walked out to a known position, then `rgbButtons[0]`. It
+  fired and the front end did not move a pixel: the game does not take its
+  cursor from that device.
+- **Presenting into the game's window** instead of the host's. It works and it
+  is much worse -- **39 presents a run against 3,000** -- because cross-thread
+  GDI to another thread's window is that slow, and the `ShowWindow` needed to
+  make it visible SENDS a message and blocks on that thread's pump.
+- **Posting window messages**, which works. The destination is the point:
+  posting to the *host* window put them in the main thread's queue, and the
+  main thread is inside lifted code from the entry point until the game exits,
+  so nobody ever pumped them. The game's window belongs to the Ronin worker
+  that created it, and that worker's step function (`sub_00550F60`) pumps every
+  frame.
+
+So `host_input()` forwards mouse and key messages from the host window to the
+game's procedure -- correct, and documented as not firing yet, because nothing
+pumps that queue -- and `--click X Y` (repeatable, with `--clickat` and
+`--clickgap`) posts a move, a press and a release to the game's own window.
+
+### --uimap, so clicking is not guesswork
+
+A 2D batch's transformed bounding box is its hot rectangle, and the draws know
+where the buttons are even when the text is not legible:
+
+```
+140,130  175x 30  centre 227,145    Single Player
+140,174  116x 30  centre 198,189    Multiplayer
+140,218  138x 30  centre 209,233    View Installation
+140,262  107x 30  centre 194,277    Show Credits
+ 22,388   78x 78  centre  61,427    back
+538,388   78x 78  centre 577,427    forward
+```
+
+`--click 227 145 --click 577 427` selects Single Player and confirms it, and
+the front end navigates: every menu colour and both button glyphs change on the
+first click, and the second brings up a page whose four items sit at the same
+four rows with different widths, loading 102 new 64x64 textures on the way.
+
 ## Where it is now
 
-A title screen, not yet a menu: the front-end text draws at the wrong scale.
-The state the game asks for on every draw is in the log and all of it is
-honoured except perspective correction --
+The front end renders and responds. It is not in a mission.
 
-```
-[d3d] draw prim=4 fvf=0x112 nv=3 ni=3 tex=0x11E99890/32bpp/pf5 blend=1 src=5
-      dst=6 atest=1 afunc=5 aref=0 cull=3 zen=1 zw=0 zf=4 ckey=0
-      tss=4,2,1/4,2,1
-```
+Two things are known about what stands in the way.
 
--- so the next work is in the transform and texture-coordinate path rather than
-anywhere else in the stack. `zw=0` on every draw is worth noting: the game
-enables the depth test and never writes depth in the front end, so draw order
-decides, and anything that looks like a layering bug is a draw-order question
-and not a depth one.
+**Deeper front-end pages stop drawing their content.** The page after Single
+Player maps four text rectangles and shows none of them; the buttons still
+draw. It is the same class of bug as the red panel and the invisible menu --
+a pixel state that this rasteriser honours differently from the hardware --
+and the way to find it is the way those two were found: look at the frame,
+then log the state of the draws that should have painted it.
+
+**Booting a map directly does not work, and the reason is structural.**
+`tools/make_focom_ini.py --run "2 1 7"` points the ini's `Run` directive at
+`Tatooine - Day` instead of the front end. The game gets a long way -- 625,000
+allocations of template compilation -- and then exits cleanly, because
+`Tatooine - Day` has an `inheritID` of `0 0 0` and the engine and renderer
+init live in the front end's own script (`Trasse - Day` inherits
+`Endor - Dawn`). A map template that inherits nothing never runs them. The
+route into a mission is through the front end, which is why the menu and the
+mouse were worth the work.

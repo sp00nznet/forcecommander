@@ -338,8 +338,30 @@ is not a pixel format -- the font atlas is ARGB1555 and decoding it as 565
 painted a solid red panel over the game's own title -- and `Clear` ignored
 `D3DCLEAR_ZBUFFER`.
 
-It is a title screen and not yet a menu: the front-end text draws at the wrong
-scale, so the transform and texture-coordinate path is where the next work is.
+And it is a menu. One value explains why it was not: the front end draws its
+menu with a vertex diffuse of 0x00FC0000 -- a real red, and an alpha of zero --
+against `ALPHAOP = MODULATE, ALPHAARG1 = TEXTURE, ALPHAARG2 = CURRENT`.
+Reading that literally multiplies every glyph by zero, and with the alpha test
+the game also sets, 6 of 500 UI draws painted anything. Taking alpha from the
+texture alone puts **Single Player / Multiplayer / View Installation / Show
+Credits** on the screen.
+
+**And it responds to a click.** That took finding out that there were two
+windows: the host's, which has the pixels, and the game's, which has the
+procedure Windows delivers input to. `--click X Y` posts a move, a press and a
+release to the game's own window -- not the host's, whose queue nobody pumps,
+because the main thread is inside lifted code for the whole run -- and
+`--uimap` prints the hot rectangles so the coordinates are read off the draws
+instead of guessed:
+
+```
+140,130  175x 30  centre 227,145    Single Player
+538,388   78x 78  centre 577,427    forward
+```
+
+Selecting Single Player changes every menu colour and both button glyphs, and
+confirming it navigates to the next page. Deeper pages stop drawing their
+content, which is the next thing.
 
 Three other things had to be right for that, and `docs/STARTUP.md` has them:
 `IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),
@@ -357,12 +379,15 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **The front-end text draws at the wrong scale.** Everything the game asks
-   for per draw is honoured except perspective-correct texture coordinates, so
-   this is a transform question. `--chase` and the per-draw state line in
-   `docs/STARTUP.md` are the instruments.
-2. **Then input.** The mouse is acquired and polled; a menu that draws
-   correctly and responds to a click is the next real milestone.
+1. **Deeper front-end pages stop drawing their content.** The page after
+   Single Player maps four text rectangles and shows none of them, while its
+   buttons still draw. Same class as the red panel and the invisible menu: a
+   pixel state honoured differently from the hardware. `--uimap`, `--dumpframe`
+   and the per-draw state line find these.
+2. **Then the mission.** Booting a map template directly does not work and the
+   reason is structural -- the engine and renderer init live in the front end's
+   script, so a map that inherits nothing never runs them. The route in is
+   through the menu.
 3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
    and returning "no device" cleanly should be enough for a first frame.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
