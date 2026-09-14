@@ -470,13 +470,108 @@ capstone installed. With `msys64/mingw64/bin` first on `PATH` its own `python`
 wins and the lift dies on `ModuleNotFoundError: No module named 'capstone'`.
 Prepend the mingw directory for `cmake --build` and for nothing else.
 
+## It renders
+
+The section boots into the game's **front end** and renders it. A run presents
+around 3,000 frames at 640x480, the title art is on screen, and the frame
+changes frame to frame:
+
+```
+[present] #2100 surface 0x11564280 640x480: 172877 of 307200 pixels non-black,
+          1348332100 rasterised in 96451 prims
+```
+
+Four things closed the gap from "presents a solid colour" to that.
+
+### 130 vtable slots were never lifted
+
+MSVC's virtual-inheritance adjustor thunks are eight bytes:
+
+```
+00762820  sub ecx, dword ptr [ecx - 4]     ; apply the vtordisp
+00762823  jmp 0x761880                     ; the real method
+```
+
+Nothing calls them and nothing falls through into them, so the catalog never
+names one and `--all` never lifted one. `RECOMP_ICALL` answered the slot with
+`unresolved VA` and set `eax = 0`, and that zero was an ordinary null return
+value: `sub_00755280` took it for the render stage it had just asked for and
+faulted on `[ebp+0x8C]` several hundred instructions later, with the one-line
+ICALL warning long since scrolled off.
+
+`run_lift.py` now unions every vtable slot address into the function list.
+The bound has to be tight -- handing them the end of `.text` the way a
+`--seeds` entry gets it gives the extent walk the whole 3.9 MB section to
+descend through and hangs the lift on its first chunk. Script depth went from
+299 lines to 485, and the run stopped faulting.
+
+Finding it took two small additions to the toolkit tracer, both upstreamed:
+`--chase VA OFFSETS` (follow a pointer chain from `ecx`, printing the vtable at
+each hop) and a caller recorded beside every indirect-call target, with the
+ring widened from 32 to 128 because a method that makes calls of its own
+scrolls its own entry out.
+
+### A rasteriser
+
+`src/runtime/raster.c`. Half-space edge functions, barycentric interpolation,
+gouraud diffuse, one modulated texture stage, SRCALPHA/INVSRCALPHA blending,
+the alpha test and a 16-bit depth test; triangle lists, strips, fans and point
+lists, indexed or not, from a raw pointer or from our own vertex buffer. It
+takes host pointers and plain integers and has no dependency on the recomp
+runtime, so it builds and checks itself:
+
+```
+$ gcc -DRASTER_MAIN -o raster_test src/runtime/raster.c -lm && ./raster_test
+raster.c self-test OK
+```
+
+The ceilings it ships with are listed at the top of the file. The one that will
+matter next is perspective-correct texture coordinates.
+
+### IDirect3DDevice7::Load was a no-op
+
+Which is how every texture in the game stayed black. The upload path is a
+**pair** of surfaces, created back to back:
+
+```
+[dd] CreateSurface 256x256 32bpp caps=0x4401008   texture, video memory
+[dd] CreateSurface 256x256 32bpp caps=0x401808    texture, system memory
+```
+
+The game locks the system-memory one, writes the image into it, and calls
+`Load` to move it to the one it draws with. With `Load` doing nothing, 3.4
+billion rasterised pixels came out invisible because every one was modulated
+by a surface full of zeros.
+
+### A bit depth is not a pixel format
+
+Two fidelity bugs that only a screenshot could have found.
+
+The font atlas is created as **ARGB1555** -- `R=0x00007C00, G=0x000003E0,
+B=0x0000001F, A=0x00008000` -- and decoding it as 565 shifts every channel,
+which is what painted a solid red panel over the game's own title. And a
+32-bit surface comes in two flavours: an alpha mask of 0 means XRGB and its
+top byte is whatever the game left there, not alpha. `O_PF` now records the
+format from the `DDPIXELFORMAT` the game passed to `CreateSurface`, and
+`raster.c` decodes 565, 1555, 4444, XRGB8888 and ARGB8888.
+
+`Clear` also ignored `D3DCLEAR_ZBUFFER`, so the depth buffer held the previous
+frame's depths.
+
 ## Where it is now
 
-The section renders and presents. The frontier is `sub_00755280`, slot 7 of a
-secondary base of `CD3D7Renderer@RE3D` and `CD3D7GeometryRenderer@RE3D`, which
-faults on a null first argument: `sub_0071E850` reads
-`[[renderer+0xC]+0x98]`, writes it to its out parameter and returns whether it
-is non-zero, and it is zero. That pointer is the renderer's geometry buffer, so
-the next question is which RE3D setup step was supposed to allocate it and what
-this shim layer told it instead.
+A title screen, not yet a menu: the front-end text draws at the wrong scale.
+The state the game asks for on every draw is in the log and all of it is
+honoured except perspective correction --
 
+```
+[d3d] draw prim=4 fvf=0x112 nv=3 ni=3 tex=0x11E99890/32bpp/pf5 blend=1 src=5
+      dst=6 atest=1 afunc=5 aref=0 cull=3 zen=1 zw=0 zf=4 ckey=0
+      tss=4,2,1/4,2,1
+```
+
+-- so the next work is in the transform and texture-coordinate path rather than
+anywhere else in the stack. `zw=0` on every draw is worth noting: the game
+enables the depth test and never writes depth in the front end, so draw order
+decides, and anything that looks like a layering bug is a draw-order question
+and not a depth one.

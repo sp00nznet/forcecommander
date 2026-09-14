@@ -318,11 +318,28 @@ the window shows frames:
 [present] #4 surface 0x10D62090 640x480: 307200 of 307200 pixels non-black
 ```
 
-Solid colours, because the `Clear` is real and the `DrawPrimitive` family still
-only counts vertices -- so **rasterisation is the next job**, and it is now the
-only thing between this and a picture. The script runs 284 lines instead of 156,
-past the wait and into blocks it had never reached, and the game starts loading
-256x256 textures.
+And then it renders. `src/runtime/raster.c` is a software rasteriser for the
+DrawPrimitive family -- half-space edge functions, gouraud diffuse, one
+modulated texture stage, alpha blending, the alpha test, a 16-bit depth test --
+and with it, plus two things that had to be right first, the game **boots into
+its front end and draws its title screen**, presenting around 3,000 frames a
+run.
+
+The two: 130 vtable slots were never lifted, because MSVC's
+virtual-inheritance adjustor thunks are eight bytes that nothing calls and
+nothing falls into, so `RECOMP_ICALL` answered the slot with `eax = 0` and a
+renderer took that null for a render stage. And
+`IDirect3DDevice7::Load` was a no-op, which is how every texture stayed black:
+the game locks a system-memory surface, writes the image, and calls `Load` to
+move it into the texture it draws with.
+
+Two more were found by looking at the frames rather than the code. A bit depth
+is not a pixel format -- the font atlas is ARGB1555 and decoding it as 565
+painted a solid red panel over the game's own title -- and `Clear` ignored
+`D3DCLEAR_ZBUFFER`.
+
+It is a title screen and not yet a menu: the front-end text draws at the wrong
+scale, so the transform and texture-coordinate path is where the next work is.
 
 Three other things had to be right for that, and `docs/STARTUP.md` has them:
 `IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),
@@ -340,15 +357,12 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Rasterise.** `Clear` is real; the `DrawPrimitive` family accepts vertices
-   and counts them. The game presents solid colours because that is all there
-   is to present. This is now the only thing between the current state and a
-   picture, and the vertex data is already in hand -- `IDirect3DVertexBuffer7`
-   hands out the buffer the game fills.
-2. **Keep following the script.** It is 284 lines deep and loading textures;
-   each new fault is one more shim or one more lifter shape. The instruments to
-   read it are `--scripttrace`, `--argtrace 0x0052C300` and
-   `tools/scriptmap.py`.
+1. **The front-end text draws at the wrong scale.** Everything the game asks
+   for per draw is honoured except perspective-correct texture coordinates, so
+   this is a transform question. `--chase` and the per-draw state line in
+   `docs/STARTUP.md` are the instruments.
+2. **Then input.** The mouse is acquired and polled; a menu that draws
+   correctly and responds to a click is the next real milestone.
 3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
    and returning "no device" cleanly should be enough for a first frame.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
