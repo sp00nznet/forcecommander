@@ -180,6 +180,8 @@ static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
  */
 /* --dumpframe PATH: write the first DUMP_PRESENTS frames the game presents to
  * PATH.N.bmp. See ddraw_dump_surface. */
+static int g_uimap;
+void ddraw_set_uimap(void) { g_uimap = 1; }
 #define DUMP_PRESENTS 5
 static const char* g_dump_path;
 void ddraw_set_dumpframe(const char* p) { g_dump_path = p; }
@@ -2335,6 +2337,48 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
     st.z_test = (g_d3d_rs[7] != 0);
     st.z_write = (g_d3d_rs[14] != 0);
     st.z_func = g_d3d_rs[23] ? (int)g_d3d_rs[23] : 4;
+
+    /*
+     * --uimap: the screen rectangle of every UI batch, once.
+     *
+     * Clicking a menu blind is guesswork, and guesswork cost a run per
+     * attempt. The draws know where the buttons are: a 2D batch's transformed
+     * bounding box IS its hot rectangle, near enough to aim at. One frame's
+     * worth, printed once, turns --click into something with coordinates
+     * behind it.
+     */
+    if (g_uimap && (fvf & 0x40u) && g_d3d_prims > 60000u) {
+        static unsigned n;
+        if (n < 400) {
+            uint32_t stv = raster_stride(fvf);
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (uint32_t k = 0; k < nvert; k++) {
+                const float* f =
+                    (const float*)(uintptr_t)ADDR(verts + k * stv);
+                float ox, oy, ow;
+                if (fvf & 0x4u) { ox = f[0]; oy = f[1]; ow = 1.0f; }
+                else {
+                    ox = f[0]*wvp[0] + f[1]*wvp[4] + f[2]*wvp[8]  + wvp[12];
+                    oy = f[0]*wvp[1] + f[1]*wvp[5] + f[2]*wvp[9]  + wvp[13];
+                    ow = f[0]*wvp[3] + f[1]*wvp[7] + f[2]*wvp[11] + wvp[15];
+                    if (ow <= 0.0001f) continue;
+                    ox = (ox / ow * 0.5f + 0.5f) * (float)vp[2];
+                    oy = (0.5f - oy / ow * 0.5f) * (float)vp[3];
+                }
+                if (ox < x0) x0 = ox;
+                if (ox > x1) x1 = ox;
+                if (oy < y0) y0 = oy;
+                if (oy > y1) y1 = oy;
+            }
+            if (x1 >= x0)
+                fprintf(stderr, "[uimap] %3.0f,%3.0f  %3.0fx%3.0f  centre"
+                                " %3.0f,%3.0f  tex=0x%08X nv=%u\n",
+                        x0, y0, x1 - x0, y1 - y0,
+                        (x0 + x1) / 2.0f, (y0 + y1) / 2.0f,
+                        g_d3d_tex[0], nvert);
+            n++;
+        }
+    }
 
     g_d3d_pixels += raster_draw(&target, zbuf.bits ? &zbuf : NULL,
                                 tex.bits ? &tex : NULL, (int)prim,
