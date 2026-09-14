@@ -249,6 +249,58 @@ static int vx_readable(uint32_t a, uint32_t n, uint32_t heap_top) {
     return vx_mapped(a, n, heap_top) && vx_committed(a, n);
 }
 
+/*
+ * --windows MS: every top-level window this process owns, once.
+ *
+ * "There are two windows" is a report about what is on screen, and the only
+ * way to answer it is to ask Windows rather than to reason about which
+ * ShowWindow calls were made. The game makes two of its own -- a
+ * CreateDialogParamA(101) loading panel and its real CreateWindowExA one --
+ * and the host makes a third, so which are visible and how big they are is
+ * the whole question.
+ */
+static DWORD g_wl_ms;
+static int   g_wl_on;
+static HWND  g_hwnd;                 /* the host's own window, made below */
+
+static BOOL CALLBACK window_row(HWND h, LPARAM unused) {
+    (void)unused;
+    if (!h) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    /* No GetWindowTextA. It SENDS WM_GETTEXT to the window own thread, and
+     * every window here belongs to a thread that may never pump -- the
+     * loading panel and the host window both belong to the main thread,
+     * which is inside lifted code from the entry point until the game exits.
+     * The first version of this report hung on its first row. GetClassNameA,
+     * GetWindowRect and IsWindowVisible all read shared state instead. */
+    char cls[64] = {0};
+    GetClassNameA(h, cls, sizeof cls);
+    RECT r = {0, 0, 0, 0};
+    GetWindowRect(h, &r);
+    fprintf(stderr, "[window] %p %s class=\"%s\" at %ld,%ld %ldx%ld\n",
+            (void*)h, IsWindowVisible(h) ? "VISIBLE" : "hidden ", cls,
+            r.left, r.top, r.right - r.left, r.bottom - r.top);
+    return TRUE;
+}
+
+static DWORD WINAPI windowlist(LPVOID unused) {
+    (void)unused;
+    Sleep(g_wl_ms);
+    fprintf(stderr, "[window] --- windows at %lu ms\n", g_wl_ms);
+    /* The three by name first, because EnumWindows came back empty for this
+     * process and a report that says nothing is worse than no report. */
+    extern void* g_panel_hwnd;                   /* shims_impl.c */
+    void* win_main_hwnd(void);                   /* shims_impl.c */
+    window_row((HWND)g_panel_hwnd, 0);
+    window_row((HWND)win_main_hwnd(), 0);
+    window_row(g_hwnd, 0);
+    fprintf(stderr, "[window] --- and every top-level window\n");
+    EnumWindows(window_row, 0);
+    return 0;
+}
+
 static DWORD    g_tl_ms;
 static int      g_tl_on;
 
@@ -852,7 +904,7 @@ void recomp_not_lifted(uint32_t va) {
 
 /* ---------------------------------------------------------------- display */
 
-static HWND    g_hwnd;
+/* g_hwnd is declared up with --windows, which reports it. */
 static HDC     g_memdc;
 static HBITMAP g_dib;
 static void*   g_dibbits;
@@ -1419,6 +1471,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
         else if (!strcmp(argv[i], "--nolib")) g_nolibtrace = 1;
+        else if (!strcmp(argv[i], "--windows") && i + 1 < argc) {
+            g_wl_on = 1;
+            g_wl_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--threadlist") && i + 1 < argc) {
             g_tl_on = 1;
             g_tl_ms = (DWORD)strtoul(argv[++i], NULL, 0);
@@ -1456,6 +1512,8 @@ int main(int argc, char** argv) {
         if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
         if (g_tl_on)
             CloseHandle(CreateThread(NULL, 0, threadlist, NULL, 0, NULL));
+        if (g_wl_on)
+            CloseHandle(CreateThread(NULL, 0, windowlist, NULL, 0, NULL));
         if (g_st_from) CloseHandle(CreateThread(NULL, 0,
                 scripttrace_window, NULL, 0, NULL));
 

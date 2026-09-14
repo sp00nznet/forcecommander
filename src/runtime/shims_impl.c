@@ -539,6 +539,9 @@ static void u32_RegisterClassExA(void) {
             name, MEM32(c + 8));
     RET((uint32_t)RegisterClassExA(&wc)); STDRET(1);
 }
+int host_width(void);            /* recomp_runtime.c */
+int host_height(void);           /* recomp_runtime.c */
+
 static void u32_CreateWindowExA(void) {
     const char* cls = ARG(1) ? (const char*)(uintptr_t)ADDR(ARG(1)) : "";
     const char* title = ARG(2) ? (const char*)(uintptr_t)ADDR(ARG(2)) : "";
@@ -554,8 +557,34 @@ static void u32_CreateWindowExA(void) {
     g_pending_create.name = ARG(2);
     g_pending_create.style = ARG(3);
     g_pending_create.params = ARG(11);
+    /*
+     * And the size is corrected, for the same reason the style is.
+     *
+     * The game sizes this window for the exclusive full-screen mode it is
+     * about to set -- measured at 1355x656 on this display -- and then renders
+     * 640x480 into it, so windowed the frames come out stretched across a
+     * window twice their size. A top-level window therefore gets a client
+     * area of exactly the render surface, which is what the mode asked for,
+     * and AdjustWindowRect turns that into the outer size an ordinary titled
+     * style needs. Centred, like host_create_window does.
+     *
+     * Child windows are left alone: their coordinates mean something to the
+     * parent.
+     */
+    int px = (int)ARG(4), py = (int)ARG(5);
+    int pw = (int)ARG(6), ph = (int)ARG(7);
+    if (!ARG(8)) {
+        RECT want = {0, 0, host_width(), host_height()};
+        AdjustWindowRect(&want, style, FALSE);
+        pw = want.right - want.left;
+        ph = want.bottom - want.top;
+        int sx = (GetSystemMetrics(SM_CXSCREEN) - pw) / 2;
+        int sy = (GetSystemMetrics(SM_CYSCREEN) - ph) / 2;
+        px = sx > 0 ? sx : 0;
+        py = sy > 0 ? sy : 0;
+    }
     HWND h = CreateWindowExA(ARG(0), cls, title, style,
-                             (int)ARG(4), (int)ARG(5), (int)ARG(6), (int)ARG(7),
+                             px, py, pw, ph,
                              ARG(8) ? i2h(ARG(8)) : NULL, NULL,
                              GetModuleHandleA(NULL), NULL);
     fprintf(stderr, "[user32] CreateWindowExA(\"%s\", \"%s\") -> %p\n",
@@ -579,8 +608,36 @@ static void u32_DefWindowProcA(void) {
                                           (WPARAM)ARG(2), lp));
     STDRET(4);
 }
-static void u32_DestroyWindow(void) { RET(DestroyWindow(i2h(ARG(0))) ? 1 : 0); STDRET(1); }
-static void u32_ShowWindow(void)    { RET(ShowWindow(i2h(ARG(0)), (int)ARG(1)) ? 1 : 0); STDRET(2); }
+/*
+ * Both logged unconditionally, and there are only a handful of calls. The
+ * game makes TWO windows -- a fullscreen CreateDialogParamA(101) loading
+ * panel and then its real CreateWindowExA one -- and which of them gets
+ * hidden, and when, is the difference between one window on screen and two.
+ *
+ * ShowWindow SENDS WM_SHOWWINDOW, so calling it on a window owned by another
+ * thread blocks until that thread pumps. The panel belongs to the main
+ * thread, which is inside lifted code from the entry point until the game
+ * exits -- so a hide arriving from a Ronin worker would deadlock, and
+ * ShowWindowAsync is the only safe form for one.
+ */
+static void u32_DestroyWindow(void) {
+    fprintf(stderr, "[user32] DestroyWindow(%p) t%lu\n",
+            (void*)i2h(ARG(0)), GetCurrentThreadId());
+    RET(DestroyWindow(i2h(ARG(0))) ? 1 : 0); STDRET(1);
+}
+static void u32_ShowWindow(void) {
+    HWND h = i2h(ARG(0));
+    DWORD owner = GetWindowThreadProcessId(h, NULL);
+    int cross = owner && owner != GetCurrentThreadId();
+    fprintf(stderr, "[user32] ShowWindow(%p, %u) t%lu owner t%lu%s\n",
+            (void*)h, ARG(1), GetCurrentThreadId(), owner,
+            cross ? " CROSS-THREAD, posted" : "");
+    /* Posted rather than sent when it is someone else's window: the send
+     * would wait for a pump that may never come. */
+    RET((cross ? ShowWindowAsync(h, (int)ARG(1))
+               : ShowWindow(h, (int)ARG(1))) ? 1 : 0);
+    STDRET(2);
+}
 static void u32_UpdateWindow(void)  { RET(UpdateWindow(i2h(ARG(0))) ? 1 : 0); STDRET(1); }
 static void u32_IsWindow(void)      { RET(IsWindow(i2h(ARG(0))) ? 1 : 0); STDRET(1); }
 static void u32_IsIconic(void)      { RET(IsIconic(i2h(ARG(0))) ? 1 : 0); STDRET(1); }
@@ -782,6 +839,8 @@ static void u32_PostThreadMessageA(void) {
  * a loaded module, so CreateDialogIndirectParam is the only form that can be
  * used -- see imp_LoadBitmapA for the same problem with bitmaps.
  */
+void* g_panel_hwnd;              /* the loading panel, for --windows */
+
 static void u32_CreateDialogParamA(void) {
     uint32_t tmpl = ARG(1), proc = ARG(3);
     uint32_t rsz = 0;
@@ -799,6 +858,10 @@ static void u32_CreateDialogParamA(void) {
             tmpl, proc, (void*)h);
     if (!h) { RET(0); STDRET(5); return; }
     win_bind(h, proc);
+    /* Kept so --windows can say whether the loading panel is still up. It is
+     * the first of the two windows the game makes and the one the ini's
+     * HideLoadingPanel directive is supposed to take down. */
+    g_panel_hwnd = h;
     RET(h2i(h)); STDRET(5);
 }
 
