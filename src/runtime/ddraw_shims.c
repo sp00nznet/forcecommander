@@ -44,6 +44,8 @@ uint32_t crt_alloc(uint32_t n);
 void*    host_surface(void);
 int      host_width(void);
 int      host_height(void);
+#include "raster.h"
+
 void     host_present(void);
 void     host_resize(int w, int h);
 
@@ -138,7 +140,8 @@ const char* ddraw_method_name(uint32_t va) {
 #define O_BACK(o)   MEM32((o) + 0x24)
 #define O_OWNER(o)  MEM32((o) + 0x28)
 #define O_ATTACH(o) MEM32((o) + 0x2C)
-#define O_SIZE      0x30
+#define O_PF(o)     MEM32((o) + 0x30)   /* RPF_*, from the DDPIXELFORMAT */
+#define O_SIZE      0x34
 
 #define KIND_DD      1
 #define KIND_SURFACE 2
@@ -154,6 +157,8 @@ static uint32_t g_vtbl_dd, g_vtbl_surf;
 uint32_t ddraw_d3d_vtable(void);   /* defined near the Direct3D block */
 static uint32_t g_primary;             /* the surface presented to the window */
 static uint32_t g_d3d_rt;              /* the Direct3D render target */
+uint32_t g_d3d_prims;                  /* primitives accepted */
+uint32_t g_d3d_pixels;                 /* pixels rasterised */
 static int      g_mode_w = 640, g_mode_h = 480, g_mode_bpp = 16;
 
 static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
@@ -223,19 +228,24 @@ static void present_surface(uint32_t s) {
     /* The first few presents say whether the frame has anything in it. A black
      * window and no window at all look the same from a log. */
     static unsigned np;
-    if (np < DUMP_PRESENTS) {
+    /* The first frames are the clear colour before the UI has anything to
+     * draw, so sample early AND every 50th. np counts every present, not just
+     * the reported ones -- gating the increment on the report is how the log
+     * stopped dead at five. */
+    np++;
+    if (np <= DUMP_PRESENTS || np % 50 == 0) {
         uint32_t nz = 0;
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++)
                 if (dst[(size_t)y * hw + x] & 0xFFFFFFu) nz++;
         fprintf(stderr, "[present] #%u surface 0x%08X %dx%d: %u of %d pixels"
-                        " non-black\n", np + 1, s, w, h, nz, w * h);
+                        " non-black, %u rasterised in %u prims\n",
+                np, s, w, h, nz, w * h, g_d3d_pixels, g_d3d_prims);
         if (g_dump_path) {
             char path[512];
             snprintf(path, sizeof path, "%s.%u.bmp", g_dump_path, np);
             ddraw_dump_surface(s, path);
         }
-        np++;
     }
     host_present();
 }
@@ -456,6 +466,20 @@ static void dd_CreateSurface(void) {
     uint32_t s = make_surface(w, h, bpp, caps);
     if (!s) { RET(DDERR_UNSUPPORTED); STDRET(4); return; }
 
+    /* A bit depth is not a pixel format. DDPIXELFORMAT sits at desc+0x48 and
+     * its masks are the only thing that distinguishes 565 from 1555 from 4444,
+     * or XRGB8888 from ARGB8888. Decoding the font atlas as 565 when it is
+     * 1555 is what put a solid red panel over the game's own title. */
+    if (desc && MEM32(desc + 0x48)) {
+        uint32_t rm = MEM32(desc + 0x58), am = MEM32(desc + 0x64);
+        if (O_BPP(s) == 16)
+            O_PF(s) = (am == 0x8000u) ? RPF_ARGB1555
+                    : (am == 0xF000u) ? RPF_ARGB4444
+                    : (rm == 0x7C00u) ? RPF_ARGB1555 : RPF_RGB565;
+        else if (O_BPP(s) == 32)
+            O_PF(s) = am ? RPF_ARGB8888 : RPF_XRGB8888;
+    }
+
     if (caps & DDSCAPS_PRIMARYSURFACE) {
         g_primary = s;
         /* A flipping primary gets a back buffer, and the game renders there. */
@@ -470,6 +494,14 @@ static void dd_CreateSurface(void) {
     fprintf(stderr, "[dd] CreateSurface %ux%u %ubpp caps=0x%X flags=0x%X -> "
                     "0x%08X%s\n", w, h, O_BPP(s), caps, flags, s,
             (caps & DDSCAPS_PRIMARYSURFACE) ? " (primary)" : "");
+    /* DDPIXELFORMAT starts at desc+0x48: size, flags, fourcc, bitcount, then
+     * the R/G/B/alpha masks. A 16-bit texture is 565, 1555 or 4444 and only
+     * these say which. */
+    if (desc && MEM32(desc + 0x48))
+        fprintf(stderr, "[dd]   pf flags=0x%X bits=%u R=%08X G=%08X B=%08X"
+                        " A=%08X\n",
+                MEM32(desc + 0x4C), MEM32(desc + 0x54), MEM32(desc + 0x58),
+                MEM32(desc + 0x5C), MEM32(desc + 0x60), MEM32(desc + 0x64));
     RET(DD_OK); STDRET(4);
 }
 
@@ -2009,7 +2041,6 @@ static uint32_t g_d3d_tex[D3D_MAXSTAGE];
 static uint8_t  g_d3d_lighton[D3D_MAXLIGHT];
 static float    g_d3d_xf[8][16];                /* world/view/projection/... */
 static uint32_t g_d3d_viewport[6];              /* x, y, w, h, minz, maxz */
-static uint32_t g_d3d_prims;                    /* primitives accepted */
 
 static void d3ddev_QueryInterface(void) {
     /* The game asks a device for IID_IDirect3DDevice7 to confirm what it has. */
@@ -2095,9 +2126,35 @@ static void d3ddev_GetRenderTarget(void) {
  * present_surface converts the other way. Honouring the rectangle list is not
  * worth it: RE3D clears the whole target.
  */
+/*
+ * Clear(dwCount, lpRects, dwFlags, dwColor, dvZ, dwStencil).
+ *
+ * D3DCLEAR_TARGET is 1 and D3DCLEAR_ZBUFFER is 2, and the second one matters
+ * as much as the first: a depth buffer that is never reset holds the previous
+ * frame's depths and the next frame's geometry fails its own test.
+ *
+ * ponytail: the rectangle list is ignored and the whole surface is cleared.
+ * The game passes count 0 (meaning the whole viewport) everywhere so far.
+ */
 static void d3ddev_Clear(void) {
     uint32_t flags = ARG(3), colour = ARG(4);
     uint32_t s = g_d3d_rt;
+    if (flags & 2u) {
+        uint32_t z = s ? O_ATTACH(s) : 0;
+        if (z && (O_CAPS(z) & 0x20000u) && O_BITS(z)) {
+            /* dvZ is a float in [0,1]; ARG(5) is its bit pattern. */
+            uint32_t bits = ARG(5);
+            float dz;
+            memcpy(&dz, &bits, 4);
+            if (dz < 0.0f) dz = 0.0f; else if (dz > 1.0f) dz = 1.0f;
+            uint16_t zv = (uint16_t)(dz * 65535.0f);
+            uint8_t* zb = (uint8_t*)(uintptr_t)ADDR(O_BITS(z));
+            for (uint32_t y = 0; y < O_H(z); y++) {
+                uint16_t* row = (uint16_t*)(zb + (size_t)y * O_PITCH(z));
+                for (uint32_t x = 0; x < O_W(z); x++) row[x] = zv;
+            }
+        }
+    }
     if ((flags & 1u) && s && O_BITS(s)) {
         uint32_t w = O_W(s), h = O_H(s), pitch = O_PITCH(s);
         uint8_t* base = (uint8_t*)(uintptr_t)ADDR(O_BITS(s));
@@ -2174,11 +2231,150 @@ static void d3ddev_EndStateBlock(void) {
 }
 static void d3ddev_PreLoad(void) { RET(DD_OK); STDRET(2); }
 
-/* The DrawPrimitive family: accepted and counted, not rasterised. */
+/* ------------------------------------------------------- the DrawPrimitive
+ * family, rasterised.
+ *
+ * raster.c does the triangles; this is the part that has to know where the
+ * game's data is. Three things have to be assembled per batch:
+ *
+ *   the render target   the surface CreateDevice was given, whose bits are
+ *                       ordinary target memory
+ *   the texture         stage 0's surface, or none
+ *   the transform       world * view * projection, needed only when the FVF
+ *                       carries XYZ rather than XYZRHW
+ *
+ * Force Commander's front end calls DrawIndexedPrimitiveVB and nothing else so
+ * far, but all four unstrided entry points are wired because the difference
+ * between them is only where the vertices come from.
+ *
+ * ponytail: the strided entry points still only count. Their
+ * D3DDRAWPRIMITIVESTRIDEDDATA is a separate pointer and stride per vertex
+ * element, which needs its own gather loop; nothing has called them.
+ */
+static void rs_from_surface(rsurf_t* o, uint32_t s) {
+    if (!s || !O_BITS(s)) { memset(o, 0, sizeof *o); return; }
+    o->bits = (uint8_t*)(uintptr_t)ADDR(O_BITS(s));
+    o->w = (int)O_W(s);
+    o->h = (int)O_H(s);
+    o->pitch = (int)O_PITCH(s);
+    o->bpp = (int)O_BPP(s);
+    o->pf = (int)O_PF(s);
+}
+
+/* row-major 4x4 multiply, a then b */
+static void mat_mul(float* o, const float* a, const float* b) {
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) {
+            float v = 0.0f;
+            for (int k = 0; k < 4; k++) v += a[r * 4 + k] * b[k * 4 + c];
+            o[r * 4 + c] = v;
+        }
+}
+
+static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
+                          uint32_t nvert, uint32_t indices, uint32_t nidx) {
+    g_d3d_prims++;
+    uint32_t rt = g_d3d_rt ? g_d3d_rt : (g_primary ? O_BACK(g_primary) : 0);
+    if (!rt || !verts || !nvert) return;
+
+    rsurf_t target, tex, zbuf;
+    rs_from_surface(&target, rt);
+    rs_from_surface(&tex, g_d3d_tex[0]);
+    /* The depth buffer is the surface the game attached to the render target;
+     * DDSCAPS_ZBUFFER is 0x20000 and its DDPIXELFORMAT is a 16-bit G mask. */
+    uint32_t zs = O_ATTACH(rt);
+    rs_from_surface(&zbuf, (zs && (O_CAPS(zs) & 0x20000u)) ? zs : 0);
+    if (!target.bits) return;
+
+    /* The pixel state the game is actually using, on the first few draws.
+     * Every one of these mattered: blend/src/dst said which blend mode to
+     * implement, atest/afunc/aref said the front end relies on the alpha test,
+     * and the texture stage ops said alpha comes from the texture and not from
+     * a diffuse the FVF does not even carry. */
+    { static unsigned n;
+      if (n++ < 3)
+          fprintf(stderr, "[d3d] draw prim=%u fvf=0x%X nv=%u ni=%u"
+                          " tex=0x%08X/%ubpp/pf%u blend=%u src=%u dst=%u"
+                          " atest=%u afunc=%u aref=%u cull=%u zen=%u zw=%u"
+                          " zf=%u ckey=%u tss=%u,%u,%u/%u,%u,%u\n",
+                  prim, fvf, nvert, nidx, g_d3d_tex[0],
+                  g_d3d_tex[0] ? O_BPP(g_d3d_tex[0]) : 0,
+                  g_d3d_tex[0] ? O_PF(g_d3d_tex[0]) : 0,
+                  g_d3d_rs[27], g_d3d_rs[19], g_d3d_rs[20], g_d3d_rs[15],
+                  g_d3d_rs[25], g_d3d_rs[24], g_d3d_rs[22], g_d3d_rs[7],
+                  g_d3d_rs[14], g_d3d_rs[23], g_d3d_rs[41],
+                  g_d3d_tss[0][1], g_d3d_tss[0][2], g_d3d_tss[0][3],
+                  g_d3d_tss[0][4], g_d3d_tss[0][5], g_d3d_tss[0][6]); }
+
+    float wv[16], wvp[16];
+    mat_mul(wv, g_d3d_xf[1], g_d3d_xf[2]);      /* world * view */
+    mat_mul(wvp, wv, g_d3d_xf[3]);              /* ... * projection */
+
+    int vp[4] = {(int)g_d3d_viewport[0], (int)g_d3d_viewport[1],
+                 (int)g_d3d_viewport[2], (int)g_d3d_viewport[3]};
+
+    /* D3DRENDERSTATE_ALPHABLENDENABLE 27, SRCBLEND 19, DESTBLEND 20,
+     * ALPHATESTENABLE 15, ALPHAFUNC 25, ALPHAREF 24. D3DBLEND_SRCALPHA is 5
+     * and INVSRCALPHA is 6; D3DCMP_GREATER is 5, which with a reference of 0
+     * is "draw anything that is not fully transparent". */
+    rstate_t st;
+    st.blend = (g_d3d_rs[27] && g_d3d_rs[19] == 5 && g_d3d_rs[20] == 6);
+    st.alpha_test = (g_d3d_rs[15] && g_d3d_rs[25] == 5);
+    st.alpha_ref = (int)(g_d3d_rs[24] & 0xFF);
+    /* D3DRENDERSTATE_ZENABLE 7, ZWRITEENABLE 14, ZFUNC 23. */
+    st.z_test = (g_d3d_rs[7] != 0);
+    st.z_write = (g_d3d_rs[14] != 0);
+    st.z_func = g_d3d_rs[23] ? (int)g_d3d_rs[23] : 4;
+
+    g_d3d_pixels += raster_draw(&target, zbuf.bits ? &zbuf : NULL,
+                                tex.bits ? &tex : NULL, (int)prim,
+                                fvf, (const uint8_t*)(uintptr_t)ADDR(verts),
+                                nvert,
+                                indices ? (const uint16_t*)(uintptr_t)ADDR(indices)
+                                        : NULL,
+                                nidx, wvp, vp, &st);
+}
+
+/* DrawPrimitive(type, fvf, verts, count, flags) */
+static void d3ddev_DrawPrimitive(void) {
+    d3d_rasterise(ARG(1), ARG(2), ARG(3), ARG(4), 0, 0);
+    RET(DD_OK); STDRET(6);
+}
+
+/* DrawIndexedPrimitive(type, fvf, verts, vcount, indices, icount, flags) */
+static void d3ddev_DrawIndexedPrimitive(void) {
+    d3d_rasterise(ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6));
+    RET(DD_OK); STDRET(8);
+}
+
+/* DrawPrimitiveVB(type, vb, startVertex, numVertices, flags).
+ *
+ * The vertices are in OUR vertex buffer, written by the game through Lock at
+ * its own FVF stride -- VB_STRIDE is only how much was allocated. */
+static void d3ddev_DrawPrimitiveVB(void) {
+    uint32_t vb = ARG(2), start = ARG(3), n = ARG(4);
+    if (vb) {
+        uint32_t fvf = VB_FVF(vb), st = raster_stride(fvf);
+        d3d_rasterise(ARG(1), fvf, VB_DATA(vb) + start * st, n, 0, 0);
+    } else g_d3d_prims++;
+    RET(DD_OK); STDRET(6);
+}
+
+/* DrawIndexedPrimitiveVB(type, vb, startVertex, numVertices,
+ *                        indices, icount, flags) */
+static void d3ddev_DrawIndexedPrimitiveVB(void) {
+    uint32_t vb = ARG(2), start = ARG(3), n = ARG(4);
+    if (vb) {
+        uint32_t fvf = VB_FVF(vb), st = raster_stride(fvf);
+        d3d_rasterise(ARG(1), fvf, VB_DATA(vb) + start * st, n,
+                      ARG(5), ARG(6));
+    } else g_d3d_prims++;
+    RET(DD_OK); STDRET(8);
+}
+
+/* Still only counted: see the note above. */
 static void d3ddev_draw5(void) { g_d3d_prims++; RET(DD_OK); STDRET(6); }
 static void d3ddev_draw7(void) { g_d3d_prims++; RET(DD_OK); STDRET(8); }
-static void d3ddev_draw4(void) { g_d3d_prims++; RET(DD_OK); STDRET(5); }
-static void d3ddev_draw6(void) { g_d3d_prims++; RET(DD_OK); STDRET(7); }
 
 static void d3ddev_SetClipStatus(void) { RET(DD_OK); STDRET(2); }
 static void d3ddev_GetClipStatus(void) {
@@ -2223,7 +2419,49 @@ static void d3ddev_CreateStateBlock(void) {
     if (ARG(2)) MEM32(ARG(2)) = next++;
     RET(DD_OK); STDRET(3);
 }
-static void d3ddev_Load(void) { RET(DD_OK); STDRET(6); }
+/*
+ * IDirect3DDevice7::Load(destTex, destPoint, srcTex, srcRect, flags).
+ *
+ * This was a no-op, and it is how every texture in the game stayed black.
+ *
+ * The upload path is a PAIR of surfaces -- the trace shows them created back
+ * to back:
+ *
+ *   [dd] CreateSurface 256x256 32bpp caps=0x4401008   texture, video memory
+ *   [dd] CreateSurface 256x256 32bpp caps=0x401808    texture, system memory
+ *
+ * The game locks the system-memory one, writes the image into it, and then
+ * calls Load to move it to the one it draws with. With Load doing nothing the
+ * video-memory texture kept the zeros it was allocated with, so the rasteriser
+ * modulated every pixel by black and 3.4 billion rasterised pixels came out
+ * invisible.
+ *
+ * ponytail: the top level only. Load is defined to walk the whole mip chain
+ * and colour-key/palette-convert on the way; the attached-surface chain is
+ * there (O_ATTACH) to walk when a mip level is ever sampled.
+ */
+static void d3ddev_Load(void) {
+    uint32_t dst = ARG(1), dp = ARG(2), src = ARG(3), sr = ARG(4);
+    int dx = 0, dy = 0, sx = 0, sy = 0;
+    int w = src ? (int)O_W(src) : 0, h = src ? (int)O_H(src) : 0;
+    if (dp) { dx = (int)MEM32(dp); dy = (int)MEM32(dp + 4); }
+    if (sr) { sx = (int)MEM32(sr); sy = (int)MEM32(sr + 4);
+              w = (int)MEM32(sr + 8) - sx; h = (int)MEM32(sr + 12) - sy; }
+    if (dst && src) {
+        blit(dst, dx, dy, src, sx, sy, w, h);
+        static unsigned n;
+        if (n++ < 12) {
+            fprintf(stderr, "[d3d] Load 0x%08X <- 0x%08X %dx%d at %d,%d\n",
+                    dst, src, w, h, dx, dy);
+            if (g_dump_path) {
+                char path[512];
+                snprintf(path, sizeof path, "%s.tex%u.bmp", g_dump_path, n);
+                ddraw_dump_surface(dst, path);
+            }
+        }
+    }
+    RET(DD_OK); STDRET(6);
+}
 static void d3ddev_LightEnable(void) {
     if (ARG(1) < D3D_MAXLIGHT) g_d3d_lighton[ARG(1)] = (uint8_t)(ARG(2) != 0);
     RET(DD_OK); STDRET(3);
@@ -2279,14 +2517,14 @@ static void d3d_init(void) {
         {d3ddev_BeginStateBlock,     "IDirect3DDevice7::BeginStateBlock"},
         {d3ddev_EndStateBlock,       "IDirect3DDevice7::EndStateBlock"},
         {d3ddev_PreLoad,             "IDirect3DDevice7::PreLoad"},
-        {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitive"},
-        {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitive"},
+        {d3ddev_DrawPrimitive,       "IDirect3DDevice7::DrawPrimitive"},
+        {d3ddev_DrawIndexedPrimitive, "IDirect3DDevice7::DrawIndexedPrimitive"},
         {d3ddev_SetClipStatus,       "IDirect3DDevice7::SetClipStatus"},
         {d3ddev_GetClipStatus,       "IDirect3DDevice7::GetClipStatus"},
         {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitiveStrided"},
         {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitiveStrided"},
-        {d3ddev_draw5,               "IDirect3DDevice7::DrawPrimitiveVB"},
-        {d3ddev_draw7,               "IDirect3DDevice7::DrawIndexedPrimitiveVB"},
+        {d3ddev_DrawPrimitiveVB,     "IDirect3DDevice7::DrawPrimitiveVB"},
+        {d3ddev_DrawIndexedPrimitiveVB, "IDirect3DDevice7::DrawIndexedPrimitiveVB"},
         {d3ddev_ComputeSphereVisibility, "IDirect3DDevice7::ComputeSphereVisibility"},
         {d3ddev_GetTexture,          "IDirect3DDevice7::GetTexture"},
         {d3ddev_SetTexture,          "IDirect3DDevice7::SetTexture"},

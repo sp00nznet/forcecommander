@@ -196,6 +196,49 @@ def main():
     # be liftable and dispatchable; it does not need the whole catalog rebuilt.
     # Feed them to disasm32 --seed-functions when the catalog is next rebuilt
     # for real, so its own recovery improves too.
+    # Every vtable slot is a function entry, and 130 of them are not in the
+    # catalog.
+    #
+    # The ones that matter are MSVC's virtual-inheritance adjustor thunks:
+    #
+    #     00762820  sub ecx, dword ptr [ecx - 4]     ; apply the vtordisp
+    #     00762823  jmp 0x761880                     ; the real method
+    #
+    # Eight bytes, no call to them, no fallthrough into them -- so the
+    # disassembler's recovery never names one, `--all` never lifts one, and
+    # RECOMP_ICALL answers the slot with "unresolved VA" and sets eax = 0. That
+    # zero is then a perfectly ordinary null return value: sub_00755280 took it
+    # as the render stage it had just asked for and faulted on [ebp+0x8C]
+    # several hundred instructions later, with the one-line ICALL warning
+    # scrolled far off the top of the log.
+    #
+    # Injecting them all beats harvesting them one run at a time through
+    # --seeds, which is what this used to take.
+    vt_path = os.path.join(_HERE, 'analysis', 'vtables.json')
+    vtadded = 0
+    if os.path.exists(vt_path):
+        want = set()
+        for e in json.load(open(vt_path)):
+            for slot in e.get('entries', ()):
+                a = int(slot, 16)
+                if cs <= a < ce and a not in byaddr:
+                    want.add(a)
+        # The bound has to be tight. Handing these `ce` like a --seeds entry
+        # hung the lift on the first chunk: a slot that lands mid-code rather
+        # than on a thunk gives the extent walk the whole 3.9 MB of .text to
+        # descend through. The next known entry above is the honest bound, and
+        # the thunks are eight bytes anyway.
+        known = sorted(set(byaddr) | want)
+        nxt = {a: (known[i + 1] if i + 1 < len(known) else ce)
+               for i, a in enumerate(known)}
+        for a in sorted(want):
+            byaddr[a] = {'address': a, 'end': min(nxt[a], a + 0x100),
+                         'name': 'sub_%08X' % a, 'size': 0,
+                         'calls_to': [], 'is_thunk': True,
+                         'entry_kind': 'start', 'num_instructions': 0}
+            vtadded += 1
+        print('[*] vtable slots not in the catalog: %d injected' % vtadded)
+
     seeded = 0
     if args.seeds and os.path.exists(args.seeds):
         for e in json.load(open(args.seeds)):
