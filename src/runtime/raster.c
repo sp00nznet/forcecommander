@@ -213,21 +213,33 @@ static uint32_t tri(const rsurf_t* rt, const rsurf_t* zb, const rsurf_t* tex,
             }
 
             /*
-             * Alpha comes from the TEXTURE, not from the vertex diffuse.
+             * Alpha is the texture's times the vertex diffuse's, which is
+             * what MODULATE means -- and it is worth recording that forcing
+             * it to opaque was tried and is wrong in a way that looks right.
              *
-             * Force Commander's front end draws its menu with a diffuse of
-             * 0x00FC0000 -- a real red, and an alpha of ZERO -- against
-             * ALPHAOP = MODULATE, ALPHAARG1 = TEXTURE, ALPHAARG2 = CURRENT.
-             * Reading that literally (alpha = texture * diffuse) multiplies
-             * every glyph by zero, and with the alpha test set to "greater
-             * than 0" the whole menu is discarded: 6 of 500 UI draws painted
-             * anything. Treating stage 0's CURRENT alpha as opaque is what
-             * puts the menu on screen, and the menu is the evidence.
+             * Force Commander's front end fades its menu in and out through
+             * the diffuse ALPHA while leaving the diffuse RGB at a real
+             * colour, so a sampled vertex reads 0x00FC0000: red, transparent.
+             * Forcing alpha to 255 makes the mid-fade text appear, which is
+             * why it was tried; it also makes the fade's transparent phase
+             * paint the diffuse RGB instead of nothing, so text that should
+             * be invisible is drawn in whatever colour the fade was passing
+             * through -- black on a black panel, at which point the menu
+             * disappears again for a different reason.
              *
-             * ponytail: so the diffuse alpha is ignored everywhere. The right
-             * shape is a real texture-stage evaluator -- eight stages, the
-             * colour and alpha argument trees, and D3DTA_COMPLEMENT -- and the
-             * moment something wants a vertex-alpha fade, that is the job.
+             * ponytail: the stage evaluator is still a single MODULATE of
+             * texture by diffuse. That is what this game sets; eight stages
+             * and the full argument tree is the job when something sets
+             * anything else.
+             */
+            /*
+             * And it is forced opaque anyway, because the alternative is a
+             * menu nobody can see. With the faithful product the front end's
+             * fade never reaches an opaque phase in a whole run and the panel
+             * stays empty from the first frame to the last; forced opaque, the
+             * menu is legible for most of it. Both are wrong and this one is
+             * wrong visibly, which is the better kind while the fade itself is
+             * unexplained.
              */
             uint32_t alpha = 0xFF;
             (void)fvf_has_diffuse;

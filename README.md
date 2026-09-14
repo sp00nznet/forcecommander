@@ -359,9 +359,24 @@ instead of guessed:
 538,388   78x 78  centre 577,427    forward
 ```
 
-Selecting Single Player changes every menu colour and both button glyphs, and
-confirming it navigates to the next page. Deeper pages stop drawing their
-content, which is the next thing.
+The mouse turned out to be DirectInput only -- the game's own window
+procedure dispatches messages 7..0x100, 0x101 and 0x102..0x112 and throws
+everything else, so WM_MOUSEMOVE and WM_LBUTTONDOWN reach it and are discarded
+-- and the cursor is driven by relative deltas divided by a sensitivity, which
+`--uimap` calibrated by reading the cursor's own 51x51 quad back:
+`--mousescale 1.25` puts an aim at 227,145 on the pixel.
+
+With that, **Show Credits works**: sixteen script blocks that had never run
+start and the panel fills with a scrolling credits roll. **View Introduction**
+works, and so does **exit**, which brings up a confirmation page with a button
+each side.
+
+**Single Player and Multiplayer do not**, and the reason is one line. The menu
+is a 217-line script block -- a Switch on the row with a Case per item -- and
+Single Player's Case runs eleven set-up calls, tests a condition at line 20,
+takes the Else and does nothing. Credits, from the same Switch, runs to its own
+Case and starts its page. `docs/STARTUP.md` has the trace and the five things
+that condition is *not*.
 
 Three other things had to be right for that, and `docs/STARTUP.md` has them:
 `IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),
@@ -379,15 +394,16 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Deeper front-end pages stop drawing their content.** The page after
-   Single Player maps four text rectangles and shows none of them, while its
-   buttons still draw. Same class as the red panel and the invisible menu: a
-   pixel state honoured differently from the hardware. `--uimap`, `--dumpframe`
-   and the per-draw state line find these.
-2. **Then the mission.** Booting a map template directly does not work and the
-   reason is structural -- the engine and renderer init live in the front end's
-   script, so a map that inherits nothing never runs them. The route in is
-   through the menu.
+1. **Line 20 of the menu dispatcher.** Single Player and Multiplayer both stop
+   there. `Resource/Players` is empty and the disc does not carry it, and
+   `missionSelector.gtx` has `NoName`, `blankname` and `namealready`, so a
+   player profile is the best guess -- the two gated items are exactly the two
+   that would need a name.
+2. **The text.** The front end's glyphs render as solid blocks or vanish
+   depending on where its colour animation is, because the diffuse alpha is
+   forced opaque: with the faithful product (texture alpha times diffuse alpha)
+   the menu never appears at all in a whole run. Both are wrong; the honest fix
+   is a real texture-stage evaluator.
 3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
    and returning "no device" cleanly should be enough for a first frame.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*

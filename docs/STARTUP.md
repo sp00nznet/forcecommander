@@ -635,25 +635,95 @@ the front end navigates: every menu colour and both button glyphs change on the
 first click, and the second brings up a page whose four items sit at the same
 four rows with different widths, loading 102 new 64x64 textures on the way.
 
+## The menu works. Two of its four items do.
+
+With the mouse calibrated, `--uimap` reading the hot rectangles off the draws
+and `--scripttrace` saying what each click ran, the front end is navigable and
+its own dispatcher is readable.
+
+### What the items are
+
+`Trasse - Night/missionSelector.gtx` in the .rpk is the front end's string
+table, and its keys name the whole thing: `single`, `multiplayer`, `intro`,
+`credits`, `exit`, `help`, `play`, `SINGLE`, `SELECT`, `campaign`, `death`,
+`scenario`, `load`, `cancel`, `namealready`, `blankname`, `MaxNames`,
+`NoName`. So the four rows are **Single Player, Multiplayer, View
+Introduction, Show Credits**, and the back arrow is `exit`.
+
+### What works
+
+```
+140,130  175x30  centre 227,145    Single Player
+140,174  116x30  centre 198,189    Multiplayer
+140,218  138x30  centre 209,233    View Introduction
+140,262  107x30  centre 194,277    Show Credits
+ 22,388   78x78  centre  61,427    exit
+538,388   78x78  centre 577,427    forward (always disabled here)
+```
+
+- A click **selects**: the selection bar appears across the row
+  (`133,131 346x31`) and the item's description at `140,315`.
+- **Show Credits activates.** Sixteen script blocks that had never run start,
+  with freshly allocated addresses, and the page fills with hundreds of
+  15-pixel text rows scrolling between y=350 and y=440. That is the credits
+  roll, and it is proof that activation works.
+- **View Introduction activates** -- three new blocks, which is the intro movie
+  being asked for and skipped.
+- The **exit** arrow activates: four new blocks and a confirmation page, with
+  three lines of prompt text in a right-hand column and a button each side
+  (`165,294` dismisses it and returns to the menu; `434,294` quits, and
+  quitting still hits the old teardown fault in `sub_0074E020`).
+
+### What does not: Single Player and Multiplayer
+
+The menu is one 217-line script block, a Switch on the row index with a Case
+per item. Single Player is the Case at line 6, and with `--scripttrace` the
+path it takes is exact:
+
+```
+L2 Switch  L3 Case  L4 arg  L5 Switch  L6 Case   <- item 0
+L7 Comment  L8 If  L9..L19 (eleven calls: Variable, Bool, Set, Message, Int)
+L20 <condition>  L21 Else  L23 EndIf              <- and it stops
+```
+
+Lines 9 to 19 set something up; line 20 tests it; the test is false and the
+Else does nothing. Show Credits, from the same Switch, runs `L6 L27 L49 L52`
+to its own Case and then two `GamePPSysLibrary` lines that start the credits
+page. So the dispatcher is fine and the gate is that one condition.
+
+What it is not:
+
+- **Not the CD check.** `GetVolumeInformationA` reports `FOCOM_1`, which is
+  disc 1's real label from the ISO primary volume descriptor.
+- **Not a missing settings path**, though that was a real bug. The game's
+  keyword table has `Options` and the install has an `Options\FoCom.opt`, and
+  the template reconstructed from `setup.ins` never emitted the directive --
+  so the game ran with no settings path at all. `make_focom_ini.py` emits it
+  now, and the argument is the FILE: given the directory the handler faults in
+  `sub_006847E0` constructing a `std::string` from a null pointer, and given
+  the `.opt` it runs clean. It does not change line 20.
+- **Not the window messages.** The game's own procedure
+  (`sub_00665D10` -> `sub_00665500`) dispatches messages 7..0x100, 0x101 and
+  0x102..0x112 and sends everything else to `DefWindowProc`, so WM_MOUSEMOVE
+  (0x200) and WM_LBUTTONDOWN (0x201) reach it and are thrown away. The mouse
+  is DirectInput only. Keys DO reach it, and Enter and Space change nothing.
+- **Not the click shape.** One tap, two taps, 60 ms and 2 s holds, and the
+  forward arrow after a selection: all only select.
+
+`Resource/Players` and `Resource/GameFiles` are empty, and the disc does not
+carry them -- they are created at runtime -- so a missing player profile is
+still the best guess for what line 20 asks about. `missionSelector.gtx`'s
+`NoName`, `blankname`, `namealready` and `MaxNames` say the front end has a
+name-entry flow, and both gated items are the two that would need a name.
+
 ## Where it is now
 
-The front end renders and responds. It is not in a mission.
+Not in a mission. The front end renders, takes input, and activates two of its
+four items; the two that lead to a game stop on one script condition, which is
+named above to the line.
 
-Two things are known about what stands in the way.
-
-**Deeper front-end pages stop drawing their content.** The page after Single
-Player maps four text rectangles and shows none of them; the buttons still
-draw. It is the same class of bug as the red panel and the invisible menu --
-a pixel state that this rasteriser honours differently from the hardware --
-and the way to find it is the way those two were found: look at the frame,
-then log the state of the draws that should have painted it.
-
-**Booting a map directly does not work, and the reason is structural.**
-`tools/make_focom_ini.py --run "2 1 7"` points the ini's `Run` directive at
-`Tatooine - Day` instead of the front end. The game gets a long way -- 625,000
-allocations of template compilation -- and then exits cleanly, because
-`Tatooine - Day` has an `inheritID` of `0 0 0` and the engine and renderer
-init live in the front end's own script (`Trasse - Day` inherits
-`Endor - Dawn`). A map template that inherits nothing never runs them. The
-route into a mission is through the front end, which is why the menu and the
-mouse were worth the work.
+Booting a map directly is not a way round it:
+`tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`, the
+game gets 625,000 allocations of template compilation deep and then exits
+cleanly, because that template's `inheritID` is `0 0 0` and the engine and
+renderer init live in the front end's own script.

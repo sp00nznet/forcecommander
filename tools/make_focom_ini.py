@@ -62,6 +62,19 @@ TEMPLATE = [
     ('Music', r'{T}\Resource\Music'),
     ('GameFiles', r'{T}\Resource\GameFiles'),
     ('Players', r'{T}\Resource\Players'),
+    # `Options` is in the game's own keyword table and the install has an
+    # Options\FoCom.opt, but the template reconstructed from setup.ins did not
+    # emit the directive, so the game ran with no settings path at all.
+    #
+    # The argument is the FILE, not the directory. Given the directory the
+    # handler faults in sub_006847E0 constructing a std::string from a null --
+    # it is looking for a name it did not get. Given the .opt it runs clean.
+    #
+    # ponytail: this has not been shown to be what the installer wrote, only
+    # that the game accepts it and asks for it. It does not unlock the front
+    # end's Single Player item either, so it is a correctness fix and not the
+    # one that matters.
+    ('Options', r'{T}\Options\FoCom.opt'),
     ('Run', '2 1 6'),
     ('HideLoadingPanel', None),
 ]
