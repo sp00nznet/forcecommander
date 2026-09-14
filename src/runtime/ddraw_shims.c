@@ -1143,15 +1143,35 @@ static uint8_t g_mouse_btn;              /* button state, persistent */
 void ddraw_mouse_move(long dx, long dy) { g_mouse_dx += dx; g_mouse_dy += dy; }
 void ddraw_mouse_button(int down) { g_mouse_btn = down ? 0x80 : 0; }
 
+/*
+ * And the keyboard, which shares this entry point.
+ *
+ * DIMOUSESTATE is 16 bytes and DIMOUSESTATE2 is 24; a DirectInput keyboard
+ * buffer is 256. The mouse fill used to run for any size >= 16, so a
+ * keyboard read got the mouse deltas written over the state of keys 0x00 to
+ * 0x0C -- which is DIK_ESCAPE, the digits and BACKSPACE held down whenever
+ * the pointer moved. Size is the discriminator.
+ *
+ * Key state is by DirectInput scan code, which is what MapVirtualKey gives
+ * for a virtual key, so --key can drive both paths from one argument.
+ */
+static uint8_t g_dikeys[256];
+
+void ddraw_key(unsigned scancode, int down) {
+    if (scancode < 256) g_dikeys[scancode] = down ? 0x80 : 0;
+}
+
 static void dev_GetDeviceState(void) {
     uint32_t n = ARG(1), p = ARG(2);
     if (p && n && n < 0x10000)
         memset((void*)(uintptr_t)ADDR(p), 0, n);
-    if (p && n >= 16) {
+    if (p && (n == 16 || n == 24)) {
         MEM32(p + 0) = (uint32_t)g_mouse_dx;
         MEM32(p + 4) = (uint32_t)g_mouse_dy;
         g_mouse_dx = g_mouse_dy = 0;
         MEM8(p + 12) = g_mouse_btn;
+    } else if (p && n == 256) {
+        memcpy((void*)(uintptr_t)ADDR(p), g_dikeys, sizeof g_dikeys);
     }
     RET(DI_OK); STDRET(3);
 }

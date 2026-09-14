@@ -1283,20 +1283,28 @@ void host_screenshot(const char* path) {
  * calls at all, so the ring stops and looks like a crash that never came. The
  * thread only READS the machine state, so it does not race it meaningfully. */
 static DWORD g_watchdog_s = 0;
-#define CLICK_MAX 8
-static struct { int x, y; } g_click[CLICK_MAX];  /* --click X Y, repeatable */
+/*
+ * --click and --key in ARGV ORDER, as one list.
+ *
+ * They used to be two lists, all the clicks and then all the keys, and a
+ * front-end flow does not work like that: Single Player, then New Player,
+ * then type a name, then the forward arrow. The order on the command line is
+ * the order of the actions.
+ */
+#define CLICK_MAX 24
+enum { ACT_CLICK = 1, ACT_KEY };
+static struct { int kind, x, y; } g_click[CLICK_MAX];
 static unsigned g_click_n;
 static DWORD g_click_ms = 20000;                 /* --clickat MS */
 static DWORD g_click_gap = 2500;                 /* --clickgap MS */
 static double g_click_scale = 1.0;               /* --mousescale N */
-#define KEY_MAX 8
-static unsigned g_key[KEY_MAX];                  /* --key VK, repeatable */
-static unsigned g_key_n;
+
 static unsigned g_click_taps = 1;                /* --taps N */
 static DWORD    g_click_hold = 300;              /* --hold MS */
 static long   g_mouse_at_x, g_mouse_at_y;        /* where we last aimed */
 void ddraw_mouse_move(long dx, long dy);         /* ddraw_shims.c */
 void ddraw_mouse_button(int down);               /* ddraw_shims.c */
+void ddraw_key(unsigned scancode, int down);     /* ddraw_shims.c */
 void ddraw_uimap_reset(void);                    /* ddraw_shims.c */
 
 /*
@@ -1336,6 +1344,28 @@ static DWORD WINAPI clicker(LPVOID unused) {
     for (int k = 0; k < 30; k++) { ddraw_mouse_move(-4000, -4000); Sleep(40); }
 
     for (unsigned k = 0; k < g_click_n; k++) {
+        if (g_click[k].kind == ACT_KEY) {
+            unsigned vk = (unsigned)g_click[k].x;
+            ddraw_uimap_reset();
+            /* All three paths, because the front end has an "Ascii Keys"
+             * thread and a Keyboard subsystem and it is not yet known which
+             * it reads: the scan code into the DirectInput key array, and
+             * WM_KEYDOWN plus the WM_CHAR that TranslateMessage would have
+             * produced plus WM_KEYUP to the window procedure, which
+             * dispatches 0x100..0x112. */
+            UINT sc = MapVirtualKeyA(vk, 0 /* MAPVK_VK_TO_VSC */);
+            fprintf(stderr, "[key] vk 0x%02X scan 0x%02X\n", vk, sc);
+            ddraw_key(sc, 1);
+            PostMessageA(h, WM_KEYDOWN, vk, (LPARAM)(1 | (sc << 16)));
+            UINT ch = MapVirtualKeyA(vk, 2 /* MAPVK_VK_TO_CHAR */) & 0xFFFF;
+            if (ch) PostMessageA(h, WM_CHAR, ch, (LPARAM)(1 | (sc << 16)));
+            Sleep(g_click_hold);
+            ddraw_key(sc, 0);
+            PostMessageA(h, WM_KEYUP, vk,
+                         (LPARAM)(0xC0000001u | (sc << 16)));
+            Sleep(g_click_gap);
+            continue;
+        }
         LPARAM pos = (LPARAM)((g_click[k].y << 16) | (g_click[k].x & 0xFFFF));
             if (k == 0) {
             /* Tell the game it is active first. A window that never got
@@ -1372,18 +1402,6 @@ static DWORD WINAPI clicker(LPVOID unused) {
             ddraw_mouse_button(0);
             if (tap + 1 < g_click_taps) Sleep(g_click_hold);
         }
-        Sleep(g_click_gap);
-    }
-    /* Keys after the clicks. The game's window procedure dispatches messages
-     * 7..0x100 and 0x101, which is WM_KEYDOWN and WM_KEYUP -- unlike the mouse
-     * messages, which fall to DefWindowProc. So a key is a path the procedure
-     * demonstrably takes. */
-    for (unsigned k = 0; k < g_key_n; k++) {
-        ddraw_uimap_reset();
-        fprintf(stderr, "[key] 0x%02X\n", g_key[k]);
-        PostMessageA(h, WM_KEYDOWN, g_key[k], 1);
-        Sleep(g_click_hold);
-        PostMessageA(h, WM_KEYUP, g_key[k], 0xC0000001u);
         Sleep(g_click_gap);
     }
     fprintf(stderr, "[click] done\n");
@@ -1498,6 +1516,7 @@ int main(int argc, char** argv) {
                  && g_click_n < CLICK_MAX) {
             g_click[g_click_n].x = (int)strtol(argv[i + 1], NULL, 0);
             g_click[g_click_n].y = (int)strtol(argv[i + 2], NULL, 0);
+            g_click[g_click_n].kind = ACT_CLICK;
             g_click_n++;
             i += 2;
         }
@@ -1512,8 +1531,12 @@ int main(int argc, char** argv) {
             g_click_gap = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--mousescale") && i + 1 < argc)
             g_click_scale = strtod(argv[++i], NULL);
-        else if (!strcmp(argv[i], "--key") && i + 1 < argc && g_key_n < KEY_MAX)
-            g_key[g_key_n++] = (unsigned)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--key") && i + 1 < argc
+                 && g_click_n < CLICK_MAX) {
+            g_click[g_click_n].kind = ACT_KEY;
+            g_click[g_click_n].x = (int)strtol(argv[++i], NULL, 0);
+            g_click_n++;
+        }
         else if (!strcmp(argv[i], "--taps") && i + 1 < argc)
             g_click_taps = (unsigned)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--hold") && i + 1 < argc)
@@ -1567,9 +1590,9 @@ int main(int argc, char** argv) {
     AddVectoredExceptionHandler(1, veh);
     mach_init();
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
-    if (g_click_n || g_key_n)
+    if (g_click_n)
         CloseHandle(CreateThread(NULL, 0, clicker, NULL, 0, NULL));
-        if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
+    if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
         if (g_tl_on)
             CloseHandle(CreateThread(NULL, 0, threadlist, NULL, 0, NULL));
         if (g_wl_on)
