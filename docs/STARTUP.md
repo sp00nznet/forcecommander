@@ -980,6 +980,83 @@ is one of the 63 states, and both gated items are the two that would need a
 name. Creating `game\Players` -- which the game probes with
 `FindFirstFileA` and which did not exist -- changed nothing.
 
+### Past it: --nocond, and the front end moves
+
+`GamePPGlobalSysWhile::Execute` initialises its result to **zero** before
+evaluating the condition:
+
+```
+result = 0
+n = (([args] >> 16) & 0x3F) - 3        ; operand count
+evaluate(ctx, args + 0xC, n, &result)
+if (!decide(result)) jump to [args + 8]
+```
+
+So the condition of any `While`, `If` or `Wait If` can be forced false by
+writing 3 into that six-bit count field. No operands touched, and no need to
+have cracked the operand grammar -- which is what had been blocking this.
+
+`--nocond LINES LINE SLOT` does it to one line, identified by its block's line
+count, its line number and the variable its first operand reads. All three are
+needed: a script line's address is different every run, and line count alone
+is not an identity, because this front end has several 25-line blocks and the
+first version patched the wrong one.
+
+```
+$ build/focom.exe game/Focom.exe --run --click 227 145 --nocond 25 3 83
+
+[nocond] block 11191BC0 line 3 of 25: header 004A1000 -> 00431000,
+         7 operands -> 0
+```
+
+And the front end moves. Five rectangles no run had ever drawn:
+
+```
+312, 29 166x30    a title bar
+182,294  30x20    171,294 110x20     Delete
+446,294 200x20    458,294  65x20     New Player
+```
+
+That is **SELECT PLAYER NAME**, with an empty list -- which is right, because
+`Resource/Players` is empty on a fresh install. `Trasse -
+Night/missionSelector.gtx` is the whole front end's string table and names
+every page from here on:
+
+```
+SINGLE PLAYER      Campaign / Skirmish / Scenario / Load Saved
+SELECT PLAYER NAME Delete / New Player / Play
+ENTER PLAYER NAME  New Player
+                   Player Already Exists / Blank Name Field /
+                   Maximum Player Names Reached / No Name Selected
+                   Please Insert Force Commander CD 1 / CD 2 / CD
+```
+
+Those last three are the prompts the "For CD" thread exists to show, which
+closes the loop on what the wait was.
+
+And the error messages are readable off the screen now. Going forward from
+SELECT PLAYER NAME with nothing chosen puts **"No Name Selected"** under the
+title, at `250,63`, which is the first message this project has read back from
+the game rather than from its own logs.
+
+### Typing, and which device the keyboard is
+
+One measurement settles it: `GetDeviceState` is only ever called with a size
+of **16**. That is `DIMOUSESTATE`, and there is no 256-byte call, so the game
+reads the mouse through DirectInput and the keyboard through its window
+procedure -- which dispatches 0x100..0x112, so `WM_KEYDOWN`, `WM_CHAR` and
+`WM_KEYUP` all reach it.
+
+A bug found on the way there, and it would have made typing impossible: the
+mouse fill in `dev_GetDeviceState` ran for any buffer of 16 bytes or more, so
+a keyboard read of 256 bytes got `lX`/`lY`/`lZ` and the button byte written
+over the state of keys 0x00 to 0x0C -- DIK_ESCAPE, the digits and BACKSPACE
+reading as held down whenever the pointer moved. Size is the discriminator.
+
+`--click` and `--key` are also one ordered list now, in argv order, because a
+front-end flow is Single Player, then New Player, then type a name, then the
+forward arrow, and two separate lists cannot express that.
+
 ## Where it is now
 
 Not in a mission.
@@ -991,8 +1068,14 @@ heard, and wake a thread called **"For CD"** that then waits forever on a
 `While` whose condition reads the script variable **"Min CD Number"**. Two
 lines write that variable -- lines 12 and 34 of the menu dispatcher, right
 after the Single Player and Multiplayer cases -- and both keep writing
-`0xFFFFFFFF`. Decoding line 11's five-operand expression, which is what line
-12 stores, is the next step and it is the whole gate.
+`0xFFFFFFFF`.
+
+With `--nocond 25 3 83` past that wait, the front end goes: **SELECT PLAYER
+NAME**, then **New Player**, and the typed characters reach the name field.
+What has not happened yet is a player being created -- the list stays empty,
+`Resource/Players` stays empty, and going forward reports "No Name Selected"
+-- so the confirm on the name page is the next thing to find, and after it
+the SINGLE PLAYER page with Campaign on it.
 
 Booting a map directly is not a way round it, and the reason is structural.
 `tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the
