@@ -179,6 +179,117 @@ static int vx_is_thunk(uint32_t v) {
     return v >= 0x00512000u && v < 0x00512300u;
 }
 
+/*
+ * --threadlist MS: every script thread, by name, with its state.
+ *
+ * --varxref found the shape by accident and it is the most useful shape in
+ * the heap. A thread record is
+ *
+ *     +00 name (char*)   +0C container   +10 code block
+ *     +14 0   +18 0      +1C index       +20 running context, or -1
+ *
+ * and a code block is recognisable by its GamePPVisCodeBlock vtable at +0 with
+ * its line array at +0x18 and line count at +0x1C. So one pass over the heap
+ * names every thread the front end has, says how many lines it is, and says
+ * whether it is running -- which is the map of the whole front end, and the
+ * way to see which page's thread should have started and did not.
+ */
+#define VIS_CODEBLOCK_VTBL 0x007C5990u
+
+/*
+ * T_OK is not enough for a heap SCAN.
+ *
+ * It answers "could this be a target pointer", which is the right question
+ * for a probe following a chain the target built. A scan follows dwords that
+ * are not pointers at all, and the heap is 1 GB RESERVED with pages committed
+ * on touch -- so a plausible-looking dword into the uncommitted part reads as
+ * a host segfault. Dereference only what is known to be mapped: the image,
+ * the stack, or the heap up to the bump pointer.
+ */
+/*
+ * ...and a range check is still not enough.
+ *
+ * The heap is 1 GB RESERVED with pages committed as the bump allocator
+ * touches them, so "below the bump pointer" does not mean "mapped": a large
+ * allocation's interior can be untouched, and a scan reading it faults. Ask
+ * the operating system, and cache the answer, because a scan asks about the
+ * same page thousands of times in a row.
+ *
+ * ponytail: one-entry cache, no invalidation. The target only ever commits
+ * more, never less, so a stale "committed" cannot become wrong -- and a stale
+ * "not committed" costs one skipped dword on a page that has just appeared.
+ */
+static int vx_committed(uint32_t a, uint32_t n) {
+    static uintptr_t lo, hi;
+    uintptr_t p0 = (uintptr_t)ADDR(a), p1 = p0 + n;
+    if (p0 >= lo && p1 <= hi) return 1;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery((void*)p0, &mbi, sizeof mbi)) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    lo = (uintptr_t)mbi.BaseAddress;
+    hi = lo + mbi.RegionSize;
+    return p1 <= hi;
+}
+
+static int vx_mapped(uint32_t a, uint32_t n, uint32_t heap_top) {
+    /* The overflow check comes FIRST and covers every branch. Without it
+     * 0xFFFFFFFF + 0x20 wraps to 0x1F, which is <= the end of the image, so a
+     * dword of 0xFFFFFFFF read as a pointer passed the image test and the
+     * scan faulted reading target address 0xFFFFFFFF. */
+    if (n == 0 || a + n < a) return 0;
+    if (a >= FOCOM_HEAP_BASE && a + n <= heap_top) return 1;
+    if (a >= FOCOM_IMAGE_BASE && a + n <= FOCOM_IMAGE_BASE + 0x00800000u)
+        return 1;
+    if (a >= FOCOM_STACK_BASE && a + n <= FOCOM_STACK_TOP) return 1;
+    return 0;
+}
+
+/* The range test and the commit test together, which is what a scan needs. */
+static int vx_readable(uint32_t a, uint32_t n, uint32_t heap_top) {
+    return vx_mapped(a, n, heap_top) && vx_committed(a, n);
+}
+
+static DWORD    g_tl_ms;
+static int      g_tl_on;
+
+static DWORD WINAPI threadlist(LPVOID unused) {
+    (void)unused;
+    Sleep(g_tl_ms);
+    uint32_t top = crt_heap_top();
+    unsigned n = 0;
+    /* A megabyte at a time with a yield between slices. Run flat out, the
+     * scan holds a core for ten seconds and the game's own threads -- which
+     * share one cooperative machine -- reorder enough to expose a race that
+     * faults in its renderer. The scan is read-only; the starvation was the
+     * problem. */
+    for (uint32_t a = FOCOM_HEAP_BASE; a + 0x24 <= top; a += 4) {
+        if ((a & 0xFFFFFu) == 0) Sleep(1);
+        if (!vx_readable(a, 0x24, top)) continue;
+        uint32_t blk = MEM32(a + 0x10);
+        if (!vx_readable(blk, 0x20, top) || MEM32(blk) != VIS_CODEBLOCK_VTBL)
+            continue;
+        uint32_t nm = MEM32(a);
+        if (!vx_readable(nm, 33, top)) continue;
+        char buf[33];
+        int j = 0;
+        for (; j < 32; j++) {
+            uint8_t c = MEM8(nm + (uint32_t)j);
+            if (c == 0) break;
+            if (c < 0x20 || c > 0x7E) { j = -1; break; }
+            buf[j] = (char)c;
+        }
+        if (j < 1) continue;
+        buf[j] = 0;
+        fprintf(stderr, "[thread] %-32s block=%08X lines=%-5u container=%08X"
+                        " index=%-5u ctx=%08X\n",
+                buf, blk, MEM32(blk + 0x1C), MEM32(a + 0xC),
+                MEM32(a + 0x1C), MEM32(a + 0x20));
+        n++;
+    }
+    fprintf(stderr, "[thread] %u script threads (heap to %08X)\n", n, top);
+    return 0;
+}
+
 static DWORD WINAPI varxref(LPVOID unused) {
     (void)unused;
     Sleep(g_vx_ms);
@@ -187,10 +298,11 @@ static DWORD WINAPI varxref(LPVOID unused) {
     unsigned nbases = 0, hits = 0;
 
     for (uint32_t a = FOCOM_HEAP_BASE; a + 32 <= top; a += 4) {
+        if (!vx_readable(a, 32, top)) continue;
         uint32_t fn = MEM32(a);
         if (!vx_is_thunk(fn)) continue;
         uint32_t args = MEM32(a + 8);
-        if (!T_OK(args)) continue;
+        if (!vx_readable(args, 0x60, top)) continue;
         int n = (int)((MEM32(args) >> 16) & 0x3Fu) - 3;
         /*
          * A line with no operand LIST keeps its single node in the argument
@@ -261,6 +373,7 @@ static DWORD WINAPI varxref(LPVOID unused) {
 
     /* Second pass: name the blocks those line arrays belong to. */
     for (uint32_t a = FOCOM_HEAP_BASE; a + 0x20 <= top; a += 4) {
+        if (!vx_readable(a, 0x40, top)) continue;
         uint32_t arr = MEM32(a + 0x18), cnt = MEM32(a + 0x1C);
         if (!T_OK(arr) || cnt == 0 || cnt > 4096) continue;
         for (unsigned b = 0; b < nbases; b++)
@@ -1306,6 +1419,10 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
         else if (!strcmp(argv[i], "--nolib")) g_nolibtrace = 1;
+        else if (!strcmp(argv[i], "--threadlist") && i + 1 < argc) {
+            g_tl_on = 1;
+            g_tl_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--varxref") && i + 2 < argc) {
             g_vx_on = 1;
             g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
@@ -1337,6 +1454,8 @@ int main(int argc, char** argv) {
     if (g_click_n || g_key_n)
         CloseHandle(CreateThread(NULL, 0, clicker, NULL, 0, NULL));
         if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
+        if (g_tl_on)
+            CloseHandle(CreateThread(NULL, 0, threadlist, NULL, 0, NULL));
         if (g_st_from) CloseHandle(CreateThread(NULL, 0,
                 scripttrace_window, NULL, 0, NULL));
 
