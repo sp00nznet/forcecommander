@@ -96,6 +96,41 @@ static int g_nolibtrace;
  */
 static DWORD g_st_from, g_st_for;
 
+/*
+ * --varpoke SLOT VALUE: pin one script variable.
+ *
+ * A script variable lives in the block's own table and its address is
+ * different every run, so --poison and --poke cannot reach it: the address is
+ * only known from inside the trace that computed it. The slot NUMBER is
+ * stable, because it is compiled into the bytecode.
+ *
+ * This is the "force the gate open" experiment. The front end's page
+ * transition spins in a While that never exits; writing the slot its
+ * condition reads says whether that loop is the gate or a symptom.
+ *
+ * ponytail: written on every read of that slot, with no restore, for the
+ * whole run. It is a diagnostic, not a fix.
+ */
+/*
+ * --nodedump LINE: the raw argument block of one script line.
+ *
+ * GamePPGlobalSysWhile::Execute is sub_005D2D30, and it says exactly where a
+ * control-flow line keeps its parts:
+ *
+ *     ecx = [args];  ecx = (ecx >> 16) & 0x3F;  ecx -= 3     ; operand count
+ *     evaluate(ctx, args + 0xC, count) -> result
+ *     if (!result) jump to [args + 8]                        ; the target
+ *
+ * So the CONDITION is a list of operand nodes starting at args+0xC, and the
+ * `op` this trace prints for a control-flow line -- [args+8] -- is its jump
+ * target and not a variable slot at all. Dumping the block is how the operand
+ * layout gets read rather than guessed.
+ */
+static int      g_nodedump = -1;
+
+static int      g_varpoke_on;
+static uint32_t g_varpoke_slot, g_varpoke_val;
+
 static DWORD WINAPI scripttrace_window(LPVOID unused) {
     (void)unused;
     Sleep(g_st_from);
@@ -128,7 +163,8 @@ static DWORD WINAPI scripttrace_window(LPVOID unused) {
  * analysis/rtti.json maps to a class name.
  */
 static void focom_trace_extra(uint32_t va) {
-    if (!g_scripttrace && !g_nolibtrace) return;
+    if (!g_scripttrace && !g_nolibtrace && !g_varpoke_on
+        && g_nodedump < 0) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -150,7 +186,7 @@ static void focom_trace_extra(uint32_t va) {
         }
         return;
     }
-    if (!g_scripttrace) return;
+    if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -201,6 +237,35 @@ static void focom_trace_extra(uint32_t va) {
                 vval = T_OK(vaddr) ? MEM32(vaddr) : 0;
             }
         }
+        if (g_nodedump >= 0 && (int)ln == g_nodedump && T_OK(args)) {
+            /* [entry+0x18] and not [entry+8]: While::Execute takes three
+             * arguments and it is the THIRD -- the line's extra field -- whose
+             * [0] carries the operand count, [8] the jump target and +0xC the
+             * operand list. [entry+8] is the argument block the non-control
+             * lines use. Both are dumped because only one of them was ever
+             * the right one. */
+            uint32_t extra = MEM32(entry + 0x18);
+            fprintf(stderr, "[node] block=%08X line=%d of %u"
+                            " args=%08X extra=%08X count=%d:",
+                    g_ecx, (int)ln, n, args, extra,
+                    T_OK(extra) ? (int)(((MEM32(extra) >> 16) & 0x3Fu)) - 3 : -99);
+            for (int k = 0; k < 0x20; k += 4)
+                fprintf(stderr, " %08X", MEM32(args + k));
+            fprintf(stderr, " |");
+            for (int k = 0; T_OK(extra) && k < 0x30; k += 4)
+                fprintf(stderr, " %08X", MEM32(extra + k));
+            fprintf(stderr, "\n");
+        }
+        if (g_varpoke_on && vaddr && (op & 0xFFFFu) == g_varpoke_slot
+            && MEM32(vaddr) != g_varpoke_val) {
+            fprintf(stderr, "[varpoke] slot %u at %08X: %08X -> %08X"
+                            " (block %08X line %d)\n",
+                    g_varpoke_slot, vaddr, MEM32(vaddr), g_varpoke_val,
+                    g_ecx, (int)ln);
+            MEM32(vaddr) = g_varpoke_val;
+            vval = g_varpoke_val;
+        }
+        if (!g_scripttrace) return;
         fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
                         " fn=%08X vt=%08X ivt=%08X op=%d node=%04X"
                         " var=%08X=%08X\n",
@@ -1033,6 +1098,13 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
         else if (!strcmp(argv[i], "--nolib")) g_nolibtrace = 1;
+        else if (!strcmp(argv[i], "--nodedump") && i + 1 < argc)
+            g_nodedump = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--varpoke") && i + 2 < argc) {
+            g_varpoke_on = 1;
+            g_varpoke_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
+            g_varpoke_val = (uint32_t)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--scripttracefrom") && i + 1 < argc)
             g_st_from = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--scripttracefor") && i + 1 < argc)
