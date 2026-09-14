@@ -579,9 +579,13 @@ static void focom_trace_extra(uint32_t va) {
          * dword in the target never changes -- which --poison can then watch
          * and --poke can force.
          */
-        uint32_t node = T_OK(args) ? (MEM32(args) & 0xFFFFu) : 0;
+        /* The WHOLE word. Its low twelve bits are the subsystem id and its
+         * top nibble the access kind, but the high half is the declaration
+         * INDEX into the script's own table -- which is the only part that
+         * names the variable. tools/gtxvars.py resolves it. */
+        uint32_t node = T_OK(args) ? MEM32(args) : 0;
         uint32_t vaddr = 0, vval = 0;
-        if ((node >> 12) == 1 && T_OK(ctx)) {
+        if (((node & 0xF000u) >> 12) == 1 && T_OK(ctx)) {
             uint32_t owner = MEM32(ctx + 0x14);
             uint32_t arr = T_OK(owner) ? MEM32(owner + 0x18) : 0;
             if (T_OK(arr)) {
@@ -656,10 +660,10 @@ static void focom_trace_extra(uint32_t va) {
         if (!g_scripttrace) return;
         fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
                         " fn=%08X vt=%08X ivt=%08X op=%d node=%04X"
-                        " var=%08X=%08X\n",
+                        " decl=%u var=%08X=%08X\n",
                 GetCurrentThreadId(), g_ecx, (int)ln, n,
                 entry ? MEM32(entry) : 0, vt, ivt, (int)op, node,
-                vaddr, vval);
+                node >> 16, vaddr, vval);
         return;
     }
     if (va != VIS_RUN_LINE) return;
