@@ -809,10 +809,52 @@ Player case posts IS consumed, something IS waiting for the page, and what it
 waits for never becomes true. Three minutes after the click, `--uimap` reports
 no rectangle the run had not already drawn.
 
-The condition at L4 goes through `sub_00655280`, which is the generic argument
-evaluator -- `word[ecx] >> 12` indexes a sixteen-entry table at 0x007C45D8 --
-so naming what it reads means decoding the argument node, and that is the next
-step.
+### What that loop is waiting for: variable slot 83
+
+`GamePPGlobalSysWhile::Execute` is `sub_005D2D30`, and it says where a
+control-flow line keeps its parts:
+
+```
+n = (([args] >> 16) & 0x3F) - 3          ; operand count
+evaluate(ctx, args + 0xC, n) -> result
+if (!result) jump to [args + 8]          ; the target
+```
+
+So the `op` the trace prints for a control-flow line is a **jump target**, not
+a variable slot -- `While op=7` is "jump to L7", which is its own `EndWhile`,
+and `EndWhile op=3` jumps back. The condition is a list of 12-byte operands at
+`args+0xC`, each `[word][0][slot]`, and `--nodedump 3` dumps it:
+
+```
+args  004A1000 000000A4 00000007 | 03471022 00000000 00000053 020800E7 ...
+      count 7        target L7     Variable slot 83   operator 0x0E7
+```
+
+The operand word's top nibble is the access kind and its low twelve bits the
+subsystem id, the same encoding `sub_00655280` dispatches on:
+
+```
+0  a script function call produces the value    sub_00506150
+1  a VARIABLE: [[ctx+0x14]+0x18] + [node+8]*4   sub_00506000
+2  an immediate: [node+8]                       sub_00506020
+3  inline data at node+4                        sub_00506030
+```
+
+`0x1022` is kind 1, subsystem 34 = `Variable`, and the slot is **83**.
+
+**Variable slot 83 is the gate.** The 217-line dispatcher reads it at L12 as
+`0xFFFFFFFF`, which is the shape of a "nothing selected" sentinel, and it is
+still `0xFFFFFFFF` every time the loop comes round. Something should assign it
+and does not.
+
+Two things about forcing it, both learned the hard way. `--poison` and
+`--poke` cannot reach a script variable at all: it lives in the block's own
+table, whose address is different every run, and is only known from inside the
+trace that computed it. `--varpoke SLOT VALUE` exists for that -- the slot
+number is compiled into the bytecode and is stable -- but it writes slot N of
+EVERY block's table, which pinning slot 7 demonstrated by reducing the front
+end to two arrow buttons, and enabling it costs enough per script line to
+change the run's timing. It is a diagnostic and not a way in.
 
 ### Two things that were missing and are not the cause
 
@@ -867,9 +909,10 @@ Not in a mission.
 The front end renders its animated backdrop and its menu, in one window, at
 4,400 presents in 130 s. It takes a click and activates three of its five
 interactive elements. The two that lead to a game post their message, are
-heard, and wake a script block that then waits forever on one condition --
-which is `L4` of a 25-line block, reached through a `While` at `L3`, and named
-above as precisely as the trace can name it.
+heard, and wake a script block that then waits forever on a `While` whose
+condition reads **script variable slot 83**, which holds `0xFFFFFFFF` and
+never changes. Finding what should assign it is the next step, and it is the
+whole gate.
 
 Booting a map directly is not a way round it, and the reason is structural.
 `tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the

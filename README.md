@@ -403,9 +403,12 @@ What it waits on is now located to a line. `--scripttracefrom MS
 and `tools/stepdecode.py` collapses 30,000 `[step]` lines into the sequence
 each block ran with a class name per line. A 25-line block that had been
 parked on a `Wait If` for the whole run wakes up on the click and enters a
-`While ... Wait ... EndWhile` that never exits. So the message is heard,
-something is waiting for the page, and the condition it waits on never becomes
-true.
+`While ... Wait ... EndWhile` that never exits. So the message is heard and
+something is waiting for the page. `--nodedump` then read that `While`'s
+condition straight out of the bytecode -- `GamePPGlobalSysWhile::Execute`
+keeps the operand count in `[args]`, the jump target in `[args+8]` and the
+operands at `args+0xC` -- and it is one operand: `Variable` slot 83, which the
+dispatcher reads as `0xFFFFFFFF` and which never changes.
 
 Two things were missing along the way and neither was the cause. `--nolib`
 proves no line the click takes names an unregistered subsystem. And the
@@ -434,12 +437,12 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **The `While` loop that never exits.** A 25-line script block enters it on
-   the Single Player click and spins for the rest of the run. Its condition
-   goes through `sub_00655280`, the generic argument evaluator -- a sixteen-way
-   dispatch on `word[ecx] >> 12` through a table at 0x007C45D8 -- so naming
-   what it reads means decoding that argument node. That is the next step, and
-   it is the whole gate.
+1. **Script variable slot 83.** A 25-line block enters a `While` on the
+   Single Player click and spins for the rest of the run, and `--nodedump`
+   read its condition out of the bytecode: one operand, `Variable` slot 83.
+   The dispatcher reads that slot as `0xFFFFFFFF` -- a "nothing selected"
+   sentinel -- and it never changes. Finding what should assign it is the
+   whole gate.
 2. **The text.** The front end's glyphs render as solid blocks or vanish
    depending on where its colour animation is, because the diffuse alpha is
    forced opaque. `--drawprobe` settled what that costs: the panel is FVF
