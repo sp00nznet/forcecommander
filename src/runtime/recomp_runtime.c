@@ -172,6 +172,24 @@ static DWORD g_st_from, g_st_for;
 static struct { int lines, line, slot, done; } g_nocond[NOCOND_MAX];
 static unsigned g_nocond_n;
 
+/*
+ * --jumpto LINES LINE SLOT TARGET: send one control-flow line somewhere else.
+ *
+ * --nocond can force a condition FALSE, which is enough when the false path
+ * is the one you want. It is not enough for an If whose TRUE branch is the
+ * one that proceeds -- the player page's forward arrow is exactly that: the
+ * name check fails, the Else draws "No Name Selected", and forcing the
+ * condition false only draws the error more reliably.
+ *
+ * But [args+8] is the line's jump target, the line it goes to when the
+ * condition is false. Point that at the first line of the TRUE branch and a
+ * failing check runs the proceeding path anyway. Which is a cheat, and says
+ * so; what it buys is seeing what is behind the gate.
+ */
+#define JUMPTO_MAX 8
+static struct { int lines, line, slot, target, done; } g_jumpto[JUMPTO_MAX];
+static unsigned g_jumpto_n;
+
 static int      g_nodedump = -1;
 
 /*
@@ -576,7 +594,7 @@ static DWORD WINAPI scripttrace_window(LPVOID unused) {
  */
 static void focom_trace_extra(uint32_t va) {
     if (!g_scripttrace && !g_nolibtrace && !g_varpoke_on
-        && g_nodedump < 0 && !g_nocond_n) return;
+        && g_nodedump < 0 && !g_nocond_n && !g_jumpto_n) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -599,7 +617,7 @@ static void focom_trace_extra(uint32_t va) {
         return;
     }
     if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0
-        && !g_nocond_n) return;
+        && !g_nocond_n && !g_jumpto_n) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -659,6 +677,24 @@ static void focom_trace_extra(uint32_t va) {
          * patch. Operand 0's slot pins it -- for the "For CD" While that is
          * variable 83, "Min CD Number". A slot of -1 means "any". Repeatable,
          * because a flow can have more than one gate in it. */
+        for (unsigned q = 0; q < g_jumpto_n && T_OK(args); q++) {
+            if (g_jumpto[q].done) continue;
+            if ((int)n != g_jumpto[q].lines || (int)ln != g_jumpto[q].line)
+                continue;
+            if (g_jumpto[q].slot >= 0) {
+                uint32_t op0 = args + 0xC;
+                if (!T_OK(op0 + 8)) continue;
+                if ((MEM32(op0) & 0xF000u) != 0x1000u) continue;
+                if ((int)MEM32(op0 + 8) != g_jumpto[q].slot) continue;
+            }
+            uint32_t was = MEM32(args + 8);
+            MEM32(args + 8) = (uint32_t)g_jumpto[q].target;
+            g_jumpto[q].done = 1;
+            fprintf(stderr, "[jumpto] block %08X line %d of %u:"
+                            " target %u -> %d\n",
+                    g_ecx, (int)ln, n, was, g_jumpto[q].target);
+            break;
+        }
         for (unsigned q = 0; q < g_nocond_n && T_OK(args); q++) {
             if (g_nocond[q].done) continue;
             if ((int)n != g_nocond[q].lines || (int)ln != g_nocond[q].line)
@@ -686,6 +722,16 @@ static void focom_trace_extra(uint32_t va) {
              * operand list. [entry+8] is the argument block the non-control
              * lines use. Both are dumped because only one of them was ever
              * the right one. */
+            /* The whole 32-byte line record first: +0 thunk, +4 the object
+             * or handler, +8 the argument block, +0xC the line delta, +0x10
+             * and +0x14 the jump targets, +0x18 extra, +0x1C a flag byte. An
+             * If is a line whose thunk (sub_00512060) branches on its
+             * handler's RESULT, so its targets live here and not in args. */
+            fprintf(stderr, "[line] block=%08X line=%d of %u record:",
+                    g_ecx, (int)ln, n);
+            for (int k = 0; k < 0x20; k += 4)
+                fprintf(stderr, " %08X", MEM32(entry + k));
+            fprintf(stderr, "\n");
             uint32_t extra = MEM32(entry + 0x18);
             fprintf(stderr, "[node] block=%08X line=%d of %u"
                             " args=%08X extra=%08X count=%d:",
@@ -1604,6 +1650,14 @@ int main(int argc, char** argv) {
             g_vx_on = 1;
             g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
             g_vx_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
+        else if (!strcmp(argv[i], "--jumpto") && i + 4 < argc
+                 && g_jumpto_n < JUMPTO_MAX) {
+            g_jumpto[g_jumpto_n].lines = (int)strtol(argv[++i], NULL, 0);
+            g_jumpto[g_jumpto_n].line = (int)strtol(argv[++i], NULL, 0);
+            g_jumpto[g_jumpto_n].slot = (int)strtol(argv[++i], NULL, 0);
+            g_jumpto[g_jumpto_n].target = (int)strtol(argv[++i], NULL, 0);
+            g_jumpto_n++;
         }
         else if (!strcmp(argv[i], "--nocond") && i + 3 < argc
                  && g_nocond_n < NOCOND_MAX) {
