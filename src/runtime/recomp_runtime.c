@@ -60,6 +60,22 @@ void ddraw_set_dumpframe(const char* path);   /* ddraw_shims.c */
 void ddraw_set_uimap(void);                   /* ddraw_shims.c */
 void ddraw_set_drawprobe(int x, int y);       /* ddraw_shims.c */
 
+/* Target memory layout, from pe_analyze on Focom.exe. */
+#define FOCOM_IMAGE_BASE  0x00400000u
+#define FOCOM_STACK_BASE  0x00200000u
+#define FOCOM_STACK_SIZE  0x00100000u        /* 1 MB */
+#define FOCOM_STACK_TOP   (FOCOM_STACK_BASE + FOCOM_STACK_SIZE)
+#define FOCOM_HEAP_BASE   0x10000000u
+/* 1 GB. The game allocates 513,718 times just loading its object templates,
+ * and crt_alloc never reuses a byte -- 128 MB ran out mid-load, after which
+ * every buf_new failed, every string came back empty, and the game reported
+ * "Duplicated object template found" because all its keys compared equal. The
+ * target's address space runs to 0x80000000 before the host's own image, so
+ * there is room; MEM_RESERVE without MEM_COMMIT keeps the pages until touched.
+ * ponytail: a bump allocator with a bigger bump. Write a real free list if a
+ * whole mission needs more than this. */
+#define FOCOM_HEAP_SIZE   0x40000000u        /* 1 GB */
+
 /* Is this plausibly a readable target address?
  *
  * A script probe walks structures the script builds, and not every field it
@@ -127,6 +143,171 @@ static DWORD g_st_from, g_st_for;
  * layout gets read rather than guessed.
  */
 static int      g_nodedump = -1;
+
+/*
+ * --varxref SLOT MS: every script line that references one variable slot.
+ *
+ * The trace says which lines RAN. When the answer is "a condition reads slot
+ * 83 and nothing ever assigns it", the useful question is the other one: which
+ * lines mention slot 83 at all, and which of those never ran?
+ *
+ * The script is all in the heap and its shapes are known, so one pass finds
+ * them. A compiled line record is 32 bytes whose first dword is one of the
+ * five per-line thunks in sub_00512060..sub_005121E0 and whose +8 is its
+ * argument block; the argument block's operand count is
+ * (([args] >> 16) & 0x3F) - 3 and its operands are 12 bytes each from
+ * args+0xC, each `[word][0][slot]` with a kind of 1 in the word's top nibble
+ * for a variable.
+ *
+ * Line records of one block are contiguous, so walking back while the first
+ * dword is still a thunk finds the block's line array, and a second pass finds
+ * the block whose [+0x18] is that array.
+ *
+ * ponytail: no lock. It reads target memory while the target runs, so a
+ * report can in principle be torn; it is a diagnostic, and taking the machine
+ * lock from a thread with no saved state is the more dangerous option.
+ */
+#define VX_BASES 64
+
+static uint32_t g_vx_slot;
+static DWORD    g_vx_ms;
+static int      g_vx_on;
+
+uint32_t crt_heap_top(void);            /* crt_shims.c */
+
+static int vx_is_thunk(uint32_t v) {
+    return v >= 0x00512000u && v < 0x00512300u;
+}
+
+static DWORD WINAPI varxref(LPVOID unused) {
+    (void)unused;
+    Sleep(g_vx_ms);
+    uint32_t top = crt_heap_top();
+    uint32_t bases[VX_BASES];
+    unsigned nbases = 0, hits = 0;
+
+    for (uint32_t a = FOCOM_HEAP_BASE; a + 32 <= top; a += 4) {
+        uint32_t fn = MEM32(a);
+        if (!vx_is_thunk(fn)) continue;
+        uint32_t args = MEM32(a + 8);
+        if (!T_OK(args)) continue;
+        int n = (int)((MEM32(args) >> 16) & 0x3Fu) - 3;
+        /*
+         * A line with no operand LIST keeps its single node in the argument
+         * block itself: the word at args+0 and the slot at args+8, which is
+         * what sub_00506000 reads. Those are the simple lines -- a Set, a
+         * plain read -- and leaving them out of this scan is how the first
+         * version reported four references when there were more.
+         */
+        if (n <= 0) {
+            if ((MEM32(args) & 0xF000u) == 0x1000u
+                && MEM32(args + 8) == g_vx_slot) {
+                uint32_t obj = MEM32(a + 4);
+                uint32_t inner = T_OK(obj) ? MEM32(obj + 0x20) : 0;
+                uint32_t base = a;
+                while (base >= FOCOM_HEAP_BASE + 32
+                       && vx_is_thunk(MEM32(base - 32)))
+                    base -= 32;
+                unsigned b;
+                for (b = 0; b < nbases; b++) if (bases[b] == base) break;
+                if (b == nbases && nbases < VX_BASES) bases[nbases++] = base;
+                fprintf(stderr, "[varxref] slot %u at line %08X: thunk %08X"
+                                " ivt=%08X simple sub=%u array %08X"
+                                " index %u\n",
+                        g_vx_slot, a, fn, T_OK(inner) ? MEM32(inner) : 0,
+                        MEM32(args) & 0xFFFu, base, (a - base) / 32);
+                hits++;
+            }
+            continue;
+        }
+        if (n > 24) continue;
+        for (int i = 0; i < n; i++) {
+            uint32_t node = args + 0xC + (uint32_t)i * 12;
+            if (!T_OK(node + 8)) break;
+            if ((MEM32(node) & 0xF000u) != 0x1000u) continue;
+            if (MEM32(node + 8) != g_vx_slot) continue;
+
+            uint32_t base = a;
+            while (base >= FOCOM_HEAP_BASE + 32 && vx_is_thunk(MEM32(base - 32)))
+                base -= 32;
+            unsigned b;
+            for (b = 0; b < nbases; b++) if (bases[b] == base) break;
+            if (b == nbases && nbases < VX_BASES) bases[nbases++] = base;
+            /* [line+4] is the GamePPVisLibrary wrapper and the object that
+             * implements this particular script function is at wrapper+0x20,
+             * whose vtable analysis/rtti.json names -- so the hit says WHICH
+             * script function mentions the slot, not just where. */
+            uint32_t obj = MEM32(a + 4);
+            uint32_t inner = T_OK(obj) ? MEM32(obj + 0x20) : 0;
+            fprintf(stderr, "[varxref] slot %u at line %08X: thunk %08X"
+                            " ivt=%08X operand %d/%d sub=%u array %08X"
+                            " index %u\n",
+                    g_vx_slot, a, fn,
+                    T_OK(inner) ? MEM32(inner) : 0,
+                    i, n, MEM32(node) & 0xFFFu, base, (a - base) / 32);
+            hits++;
+            break;
+        }
+    }
+
+    uint32_t blocks[VX_BASES];
+    unsigned nblocks = 0;
+
+    /* Second pass: name the blocks those line arrays belong to. */
+    for (uint32_t a = FOCOM_HEAP_BASE; a + 0x20 <= top; a += 4) {
+        uint32_t arr = MEM32(a + 0x18), cnt = MEM32(a + 0x1C);
+        if (!T_OK(arr) || cnt == 0 || cnt > 4096) continue;
+        for (unsigned b = 0; b < nbases; b++)
+            if (bases[b] == arr) {
+                fprintf(stderr, "[varxref]   array %08X is block %08X"
+                                " with %u lines, header:", arr, a, cnt);
+                for (int k = 0; k < 0x40; k += 4)
+                    fprintf(stderr, " %08X", MEM32(a + k));
+                fprintf(stderr, "\n");
+                if (nblocks < VX_BASES) blocks[nblocks++] = a;
+            }
+    }
+    /*
+     * Third pass: who points AT those blocks.
+     *
+     * A block only steps when something calls the container step with an
+     * execution context, so a block that exists and never runs is one nobody
+     * invokes. Every dword in the heap equal to the block's address is a
+     * candidate holder -- an event-function object, a thread, a page -- and
+     * its neighbours say which.
+     */
+    for (uint32_t a = FOCOM_HEAP_BASE; a + 4 <= top; a += 4) {
+        uint32_t v = MEM32(a);
+        for (unsigned b = 0; b < nblocks; b++) {
+            if (v != blocks[b]) continue;
+            fprintf(stderr, "[varxref]   block %08X held at %08X, around:",
+                    v, a);
+            for (int k = -0x10; k < 0x14; k += 4)
+                fprintf(stderr, " %08X", MEM32((uint32_t)((int32_t)a + k)));
+            /* The holder records seen so far start with a name pointer four
+             * dwords back, so print anything there that reads as text. */
+            for (int k = -0x10; k < 0x14; k += 4) {
+                uint32_t sp = MEM32((uint32_t)((int32_t)a + k));
+                if (!T_OK(sp)) continue;
+                char nm[33];
+                int j = 0;
+                for (; j < 32; j++) {
+                    uint8_t c = MEM8(sp + (uint32_t)j);
+                    if (c == 0) break;
+                    if (c < 0x20 || c > 0x7E) { j = -1; break; }
+                    nm[j] = (char)c;
+                }
+                if (j >= 3) { nm[j] = 0; fprintf(stderr, "  [%+d]=\"%s\"", k, nm); }
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
+    fprintf(stderr, "[varxref] %u lines reference slot %u,"
+                    " in %u blocks (heap to %08X)\n",
+            hits, g_vx_slot, nbases, top);
+    return 0;
+}
 
 static int      g_varpoke_on;
 static uint32_t g_varpoke_slot, g_varpoke_val;
@@ -256,14 +437,44 @@ static void focom_trace_extra(uint32_t va) {
                 fprintf(stderr, " %08X", MEM32(extra + k));
             fprintf(stderr, "\n");
         }
-        if (g_varpoke_on && vaddr && (op & 0xFFFFu) == g_varpoke_slot
-            && MEM32(vaddr) != g_varpoke_val) {
-            fprintf(stderr, "[varpoke] slot %u at %08X: %08X -> %08X"
-                            " (block %08X line %d)\n",
-                    g_varpoke_slot, vaddr, MEM32(vaddr), g_varpoke_val,
-                    g_ecx, (int)ln);
-            MEM32(vaddr) = g_varpoke_val;
-            vval = g_varpoke_val;
+        /*
+         * Pin the slot wherever this line mentions it, which is two different
+         * places. A simple line keeps its slot at args+8 -- that is `op` --
+         * and a line with an operand LIST keeps one per operand at
+         * args+0xC+12i+8. The first version only looked at `op`, so
+         * --varpoke 83 wrote nothing at all: every reference to slot 83 in
+         * this front end is an operand, and for the While that matters most
+         * `op` is the jump target.
+         */
+        if (g_varpoke_on && T_OK(ctx)) {
+            uint32_t owner = MEM32(ctx + 0x14);
+            uint32_t arr = T_OK(owner) ? MEM32(owner + 0x18) : 0;
+            int cnt = T_OK(args) ? (int)((MEM32(args) >> 16) & 0x3Fu) - 3 : 0;
+            if (T_OK(arr)) {
+                uint32_t slots[25];
+                unsigned ns = 0;
+                if (cnt <= 0) {
+                    if (T_OK(args) && (MEM32(args) & 0xF000u) == 0x1000u)
+                        slots[ns++] = MEM32(args + 8);
+                } else if (cnt <= 24) {
+                    for (int k = 0; k < cnt; k++) {
+                        uint32_t nd = args + 0xC + (uint32_t)k * 12;
+                        if (T_OK(nd + 8) && (MEM32(nd) & 0xF000u) == 0x1000u)
+                            slots[ns++] = MEM32(nd + 8);
+                    }
+                }
+                for (unsigned k = 0; k < ns; k++) {
+                    if ((slots[k] & 0xFFFFu) != g_varpoke_slot) continue;
+                    uint32_t va2 = arr + (slots[k] & 0xFFFFu) * 4;
+                    if (!T_OK(va2) || MEM32(va2) == g_varpoke_val) continue;
+                    fprintf(stderr, "[varpoke] slot %u at %08X: %08X -> %08X"
+                                    " (block %08X line %d of %u)\n",
+                            g_varpoke_slot, va2, MEM32(va2), g_varpoke_val,
+                            g_ecx, (int)ln, n);
+                    MEM32(va2) = g_varpoke_val;
+                    if (va2 == vaddr) vval = g_varpoke_val;
+                }
+            }
         }
         if (!g_scripttrace) return;
         fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
@@ -292,21 +503,6 @@ void mach_init(void);
 void mach_enter(void);
 void mach_leave(void);
 
-/* Target memory layout, from pe_analyze on Focom.exe. */
-#define FOCOM_IMAGE_BASE  0x00400000u
-#define FOCOM_STACK_BASE  0x00200000u
-#define FOCOM_STACK_SIZE  0x00100000u        /* 1 MB */
-#define FOCOM_STACK_TOP   (FOCOM_STACK_BASE + FOCOM_STACK_SIZE)
-#define FOCOM_HEAP_BASE   0x10000000u
-/* 1 GB. The game allocates 513,718 times just loading its object templates,
- * and crt_alloc never reuses a byte -- 128 MB ran out mid-load, after which
- * every buf_new failed, every string came back empty, and the game reported
- * "Duplicated object template found" because all its keys compared equal. The
- * target's address space runs to 0x80000000 before the host's own image, so
- * there is room; MEM_RESERVE without MEM_COMMIT keeps the pages until touched.
- * ponytail: a bump allocator with a bigger bump. Write a real free list if a
- * whole mission needs more than this. */
-#define FOCOM_HEAP_SIZE   0x40000000u        /* 1 GB */
 
 /* ---------------------------------------------------------------- dispatch */
 
@@ -1098,6 +1294,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
         else if (!strcmp(argv[i], "--nolib")) g_nolibtrace = 1;
+        else if (!strcmp(argv[i], "--varxref") && i + 2 < argc) {
+            g_vx_on = 1;
+            g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
+            g_vx_ms = (DWORD)strtoul(argv[++i], NULL, 0);
+        }
         else if (!strcmp(argv[i], "--nodedump") && i + 1 < argc)
             g_nodedump = (int)strtol(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--varpoke") && i + 2 < argc) {
@@ -1123,6 +1324,7 @@ int main(int argc, char** argv) {
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     if (g_click_n || g_key_n)
         CloseHandle(CreateThread(NULL, 0, clicker, NULL, 0, NULL));
+        if (g_vx_on) CloseHandle(CreateThread(NULL, 0, varxref, NULL, 0, NULL));
         if (g_st_from) CloseHandle(CreateThread(NULL, 0,
                 scripttrace_window, NULL, 0, NULL));
 

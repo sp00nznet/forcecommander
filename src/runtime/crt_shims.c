@@ -92,6 +92,10 @@ static uint32_t heap_bin[HEAP_BINS];
 static uint32_t heap_large;
 static unsigned heap_allocs, heap_reused, heap_frees;
 
+/* How far the bump allocator has got, for a diagnostic that wants to scan
+ * everything the target has allocated. */
+uint32_t crt_heap_top(void) { return heap_next; }
+
 static uint32_t heap_take(uint32_t n16, uint32_t bin) {
     uint32_t p;
     if (bin != BIN_LARGE) {
