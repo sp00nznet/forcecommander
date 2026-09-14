@@ -180,6 +180,8 @@ static uint32_t obj_new(uint32_t vtbl, uint32_t kind) {
  */
 /* --dumpframe PATH: write the first DUMP_PRESENTS frames the game presents to
  * PATH.N.bmp. See ddraw_dump_surface. */
+static int g_vtxdump;
+void ddraw_set_vtxdump(void) { g_vtxdump = 1; }
 static int g_uimap;
 void ddraw_set_uimap(void) { g_uimap = 1; }
 /*
@@ -764,20 +766,46 @@ static void sf_Flip(void) {
     RET(DD_OK); STDRET(3);
 }
 
-static void blit(uint32_t dst, int dx, int dy, uint32_t src,
-                 int sx, int sy, int w, int h) {
+/*
+ * Blt's mirror, which is how a BMP gets turned the right way up.
+ *
+ * DDBLT_DDFX (0x800) with DDBLTFX_MIRRORUPDOWN (dwDDFX bit 1, at DDBLTFX+4)
+ * flips the source vertically; DDBLTFX_MIRRORLEFTRIGHT (bit 0) mirrors it.
+ * Ignoring those flags left every texture in the game upside down -- which
+ * nobody notices on a tank or a tree, and which turns a font sheet into a
+ * different letter for every glyph. The atlas dumped as its own alpha channel
+ * is the picture that proves it: ASCII running bottom to top with every
+ * glyph inverted.
+ *
+ * ponytail: mirror only, no stretch, no ROP, no colour key. Blt's other
+ * thirty flags have not been observed; the sizes always match.
+ */
+static void blit_fx(uint32_t dst, int dx, int dy, uint32_t src,
+                    int sx, int sy, int w, int h, int flip_v, int flip_h) {
     if (!dst || !src || !O_BITS(dst) || !O_BITS(src)) return;
     if (O_BPP(dst) != O_BPP(src)) return;
     int bpp = (int)O_BPP(dst) / 8;
     for (int y = 0; y < h; y++) {
+        int syy = flip_v ? sy + h - 1 - y : sy + y;
         if (dy + y < 0 || dy + y >= (int)O_H(dst)) continue;
-        if (sy + y < 0 || sy + y >= (int)O_H(src)) continue;
+        if (syy < 0 || syy >= (int)O_H(src)) continue;
         uint8_t* d = (uint8_t*)(uintptr_t)ADDR(O_BITS(dst)
                        + (uint32_t)(dy + y) * O_PITCH(dst) + (uint32_t)dx * bpp);
         const uint8_t* s = (const uint8_t*)(uintptr_t)ADDR(O_BITS(src)
-                       + (uint32_t)(sy + y) * O_PITCH(src) + (uint32_t)sx * bpp);
-        memcpy(d, s, (size_t)w * bpp);
+                       + (uint32_t)syy * O_PITCH(src) + (uint32_t)sx * bpp);
+        if (!flip_h) {
+            memcpy(d, s, (size_t)w * bpp);
+        } else {
+            for (int x = 0; x < w; x++)
+                memcpy(d + (size_t)x * bpp, s + (size_t)(w - 1 - x) * bpp,
+                       (size_t)bpp);
+        }
     }
+}
+
+static void blit(uint32_t dst, int dx, int dy, uint32_t src,
+                 int sx, int sy, int w, int h) {
+    blit_fx(dst, dx, dy, src, sx, sy, w, h, 0, 0);
 }
 
 static void sf_Blt(void) {
@@ -790,7 +818,17 @@ static void sf_Blt(void) {
               int sw = (int)MEM32(sr + 8) - sx, sh = (int)MEM32(sr + 12) - sy;
               if (sw < w) w = sw;
               if (sh < h) h = sh; }
-    if (src) blit(dst, dx, dy, src, sx, sy, w, h);
+    /* DDBLT_DDFX is 0x800 and dwDDFX sits at DDBLTFX+4: bit 0 mirrors left to
+     * right, bit 1 up and down. */
+    uint32_t flags = ARG(4), fx = ARG(5), ddfx = 0;
+    if ((flags & 0x800u) && fx) ddfx = MEM32(fx + 4);
+    { static unsigned n;
+      if ((ddfx & 3u) && n++ < 6)
+          fprintf(stderr, "[dd] Blt mirror%s%s %dx%d -> 0x%08X\n",
+                  (ddfx & 2u) ? " updown" : "", (ddfx & 1u) ? " leftright" : "",
+                  w, h, dst); }
+    if (src) blit_fx(dst, dx, dy, src, sx, sy, w, h,
+                     (ddfx & 2u) != 0, (ddfx & 1u) != 0);
     if (dst == g_primary) present_surface(dst);
     RET(DD_OK); STDRET(6);
 }
@@ -2488,6 +2526,77 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
                       g_d3d_tss[sg][11]);
       } }
 
+    /*
+     * --vtxdump: the first few 2D batches, vertex by vertex.
+     *
+     * FVF 0x142 is XYZ | DIFFUSE | TEX1, stride 24: position at +0, diffuse at
+     * +12, u and v at +16 and +20. Glyph quads are what this FVF draws, so
+     * whether a text run's texture coordinates advance per glyph -- a font
+     * atlas -- or repeat is the question the illegible text turns on.
+     */
+    if (g_vtxdump && (fvf == 0x142u || fvf == 0x144u)) {
+        static unsigned vn;
+        if (vn++ < 6) {
+            uint32_t stv = raster_stride(fvf);
+            uint32_t uvo = (fvf & 4u) ? 20 : 16;
+            fprintf(stderr, "[vtx] fvf=0x%X stride=%u nv=%u ni=%u tex=%08X"
+                            " %ux%u\n",
+                    fvf, stv, nvert, nidx, g_d3d_tex[0],
+                    g_d3d_tex[0] ? O_W(g_d3d_tex[0]) : 0,
+                    g_d3d_tex[0] ? O_H(g_d3d_tex[0]) : 0);
+            /* And the atlas itself, once per texture. Correct positions and
+             * correct texture coordinates leave only the texture's CONTENT,
+             * and a font sheet is something a person can look at. */
+            if (g_d3d_tex[0]) {
+                static uint32_t dumped[8];
+                static unsigned nd;
+                int fresh = 1;
+                for (unsigned q = 0; q < nd; q++)
+                    if (dumped[q] == g_d3d_tex[0]) fresh = 0;
+                if (fresh && nd < 8) {
+                    dumped[nd++] = g_d3d_tex[0];
+                    char path[128];
+                    snprintf(path, sizeof path, "work/font_%08X.bmp",
+                             g_d3d_tex[0]);
+                    ddraw_dump_surface(g_d3d_tex[0], path);
+                    fprintf(stderr, "[vtx]   atlas -> %s\n", path);
+                    /* And the ALPHA, replicated into grey. A font sheet is
+                     * white RGB with the glyphs in its alpha channel, so the
+                     * colour dump above is a blank page and says nothing. */
+                    uint32_t tw = O_W(g_d3d_tex[0]), th = O_H(g_d3d_tex[0]);
+                    uint32_t bits = O_BITS(g_d3d_tex[0]);
+                    if (bits && tw && th && O_BPP(g_d3d_tex[0]) == 32) {
+                        snprintf(path, sizeof path, "work/fonta_%08X.pgm",
+                                 g_d3d_tex[0]);
+                        FILE* f = fopen(path, "wb");
+                        if (f) {
+                            fprintf(f, "P5\n%u %u\n255\n", tw, th);
+                            const uint8_t* src =
+                                (const uint8_t*)(uintptr_t)ADDR(bits);
+                            uint32_t pitch = O_PITCH(g_d3d_tex[0]);
+                            for (uint32_t yy = 0; yy < th; yy++)
+                                for (uint32_t xx = 0; xx < tw; xx++)
+                                    fputc(src[yy * pitch + xx * 4 + 3], f);
+                            fclose(f);
+                            fprintf(stderr, "[vtx]   alpha -> %s\n", path);
+                        }
+                    }
+                }
+            }
+            for (uint32_t k = 0; k < nvert && k < 12; k++) {
+                const uint8_t* b = (const uint8_t*)(uintptr_t)ADDR(verts + k * stv);
+                float x, y, u, uv;
+                memcpy(&x, b, 4);
+                memcpy(&y, b + 4, 4);
+                memcpy(&u, b + uvo, 4);
+                memcpy(&uv, b + uvo + 4, 4);
+                fprintf(stderr, "[vtx]   v%-2u xy %9.2f %9.2f  uv %7.4f %7.4f"
+                                "  dif %08X\n",
+                        k, x, y, u, uv, MEM32(verts + k * stv + (uvo - 4)));
+            }
+        }
+    }
+
     float wv[16], wvp[16];
     mat_mul(wv, g_d3d_xf[1], g_d3d_xf[2]);      /* world * view */
     mat_mul(wvp, wv, g_d3d_xf[3]);              /* ... * projection */
@@ -2648,6 +2757,17 @@ static void d3ddev_GetTexture(void) {
     RET(DD_OK); STDRET(3);
 }
 static void d3ddev_SetTexture(void) {
+    /* Recorded or applied? If the game binds its font textures inside a
+     * state block, recording them defers every bind and each glyph run draws
+     * with whatever texture was last APPLIED -- which is right positions and
+     * wrong glyphs, exactly what the text looks like. */
+    { static unsigned rec, app;
+      if (g_sb_rec) rec++; else app++;
+      if (rec + app < 12)
+          fprintf(stderr, "[tex] SetTexture(%u, %08X) %s (recorded %u,"
+                          " applied %u)\n",
+                  ARG(1), ARG(2), g_sb_rec ? "RECORDED" : "applied",
+                  rec, app); }
     if (!sb_record(SB_TEX, ARG(1), ARG(2), 0))
         sb_set(SB_TEX, ARG(1), ARG(2), 0);
     RET(DD_OK); STDRET(3);
