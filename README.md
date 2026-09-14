@@ -422,6 +422,20 @@ strings, and the third is "Please, insert the Force Commander CD to proceed".
 So it was never a player profile and never a page that fails to draw. The
 front end reaches its disc check.
 
+**And the check can be stepped over.** `GamePPGlobalSysWhile::Execute`
+initialises its result to zero before evaluating, so writing 3 into the
+six-bit operand-count field of any control-flow line forces its condition
+false -- no operands touched, and no need for the operand grammar that had
+been in the way. `--nocond 25 3 83` does it to that one line, identified by
+its block's line count, its line number and the variable its first operand
+reads, because a script line's address is different every run and several
+25-line blocks exist.
+
+With it, the front end navigates for the first time: **SELECT PLAYER NAME**,
+then **ENTER PLAYER NAME** with a caret and a field that grows as you type,
+then a list row that selects. Not a mission yet -- the player is never
+committed -- but past the menu.
+
 Two things were missing along the way and neither was the cause. `--nolib`
 proves no line the click takes names an unregistered subsystem. And the
 install was short 260 MB: `Resource\Music` and `Resource\Movies` had never
@@ -449,23 +463,23 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **"Min CD Number".** The thread that spins on the Single Player click is
-   called `For CD`, and `--nodedump` read its `While` condition out of the
-   bytecode: one operand, variable slot 83, which `tools/gtxvars.py` names
-   from the script's own declaration table as **Min CD Number**. Lines 12 and
-   34 of the menu dispatcher write it, right after the Single Player and
-   Multiplayer cases, and both keep writing `0xFFFFFFFF` -- forcing it to 1
-   gets overwritten 113 times in a run. Decoding line 11's five-operand
-   expression, which is what line 12 stores, is the whole gate.
-   `Resource/appname.ini` is three strings and the third is "Please, insert
-   the Force Commander CD to proceed".
-2. **The text.** The front end's glyphs render as solid blocks or vanish
-   depending on where its colour animation is, because the diffuse alpha is
-   forced opaque. `--drawprobe` settled what that costs: the panel is FVF
-   0x112, which has no diffuse at all, so it looks the same either way, and the
-   TEXT is FVF 0x142 with a vertex diffuse alpha of zero in every batch sampled
-   across a run. Both readings are wrong; the honest fix is a real
-   texture-stage evaluator.
+1. **Commit a player name.** The gate is open: `--nocond 25 3 83` forces the
+   disc wait's condition false and the front end navigates. Single Player
+   gives SELECT PLAYER NAME, New Player gives ENTER PLAYER NAME with a caret,
+   typing grows the field, and the list row selects. What does not happen is
+   the player being created -- `Resource/Players` stays empty and the forward
+   arrow reports "No Name Selected". After that come SINGLE PLAYER
+   (Campaign / Skirmish / Scenario / Load Saved) and a mission.
+2. **The text, because it is now the bottleneck.** Every step above was found
+   by clicking a `--uimap` rectangle and reading the result out of rectangle
+   *widths*: the glyphs land in the right places with the wrong glyph or none,
+   so "Single Player" renders as `Si l  yeP a e`. The run widths being right
+   puts it in the per-glyph texture coordinates rather than the transform.
+3. **The alpha, underneath that.** `--drawprobe` settled what the forced
+   opaque diffuse costs: the panel is FVF 0x112, which has no diffuse at all,
+   so it looks the same either way, and the TEXT is FVF 0x142 with a vertex
+   diffuse alpha of zero in every batch sampled across a run. Both readings
+   are wrong; the honest fix is a real texture-stage evaluator.
 3. **Miles (21 entries).** Still stubs, and the install now has its music, so
    there is something for them to play.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*

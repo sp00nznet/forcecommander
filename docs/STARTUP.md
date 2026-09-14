@@ -1070,12 +1070,38 @@ lines write that variable -- lines 12 and 34 of the menu dispatcher, right
 after the Single Player and Multiplayer cases -- and both keep writing
 `0xFFFFFFFF`.
 
-With `--nocond 25 3 83` past that wait, the front end goes: **SELECT PLAYER
-NAME**, then **New Player**, and the typed characters reach the name field.
-What has not happened yet is a player being created -- the list stays empty,
-`Resource/Players` stays empty, and going forward reports "No Name Selected"
--- so the confirm on the name page is the next thing to find, and after it
-the SINGLE PLAYER page with Campaign on it.
+With `--nocond 25 3 83` past that wait the front end navigates, and the
+measured sequence is:
+
+```
+click 227,145   Single Player      -> SELECT PLAYER NAME, list empty
+click 470,305   New Player         -> ENTER PLAYER NAME, caret at 215,180
+key A B C                          -> the field at 80,180 grows 68 -> 99 px
+key Enter
+click 110,187                      -> the row selects: a 464x42 bar at 77,169
+click 625,305   Play               -> nothing further
+```
+
+So the page changes, the field takes characters, and the row selects. What has
+not happened is the player being committed: `Resource/Players` stays empty and
+the forward arrow from the player page reports **"No Name Selected"**, so the
+confirm on the name page is the next thing to find. After it come SINGLE
+PLAYER (Campaign / Skirmish / Scenario / Load Saved) and then a mission.
+
+Two things would make that much faster than it has been, and both are known:
+
+- **The text.** Every step above was found by clicking at a rectangle
+  `--uimap` reported and reading the result out of rectangle *widths*, because
+  the glyphs are illegible -- letters land at the right place with the wrong
+  glyph or none, so "Single Player" renders as `Si l  yeP a e`. The run widths
+  are right, which puts it in the per-glyph texture coordinates rather than in
+  the transform. Legible text turns each of these runs from a guess into a
+  reading.
+- **The loop.** One click chain is nine minutes: the front end needs a hundred
+  seconds to reach its menu and each action is another thirteen. `--threadwatch`
+  was written to read the state out of the thread records instead of the
+  screen, and it is too slow as written -- it walks the whole committed heap
+  per snapshot. Indexing the blocks once would fix it.
 
 Booting a map directly is not a way round it, and the reason is structural.
 `tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the
