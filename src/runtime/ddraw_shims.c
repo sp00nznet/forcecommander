@@ -2243,11 +2243,34 @@ static void d3ddev_GetViewport(void) {
     RET(DD_OK); STDRET(2);
 }
 
-static void d3ddev_SetMaterial(void) { RET(DD_OK); STDRET(2); }
+/*
+ * D3DMATERIAL7: diffuse, ambient, specular and emissive, four floats each,
+ * then power. 68 bytes. Kept but not yet used -- the only draws with lighting
+ * enabled are the FVF 0x112 ones, which carry a normal, and the front end's
+ * 2D work (0x142 and 0x42) sets LIGHTING off and is lit by its own vertex
+ * diffuse.
+ *
+ * ponytail: stored and ignored. The material is (white, white, 0 emissive)
+ * and the game enables exactly one light, so real lighting is an N.L term
+ * away -- worth doing when the 3D scene renders, useless before then.
+ */
+static float g_d3d_mat[17] = {1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+#define MAT_DIFFUSE  0
+#define MAT_AMBIENT  4
+#define MAT_EMISSIVE 12
+
+static void d3ddev_SetMaterial(void) {
+    if (ARG(1))
+        memcpy(g_d3d_mat, (void*)(uintptr_t)ADDR(ARG(1)), sizeof g_d3d_mat);
+    RET(DD_OK); STDRET(2);
+}
+
 static void d3ddev_GetMaterial(void) {
-    /* D3DMATERIAL7 is 16 floats plus a power; a getter that leaves it alone
-     * gives the caller stack contents to multiply colours by. */
-    if (ARG(1)) for (int i = 0; i < 0x44; i += 4) MEM32(ARG(1) + i) = 0;
+    /* The getter answers with what SetMaterial stored, because a getter that
+     * leaves the struct alone gives the caller stack contents to multiply
+     * colours by. */
+    if (ARG(1))
+        memcpy((void*)(uintptr_t)ADDR(ARG(1)), g_d3d_mat, sizeof g_d3d_mat);
     RET(DD_OK); STDRET(2);
 }
 static void d3ddev_SetLight(void) { RET(DD_OK); STDRET(3); }
@@ -2256,8 +2279,64 @@ static void d3ddev_GetLight(void) {
     RET(DD_OK); STDRET(3);
 }
 
+/*
+ * State blocks, which were a no-op and should not have been.
+ *
+ * Between BeginStateBlock and EndStateBlock, Direct3D RECORDS state-setting
+ * calls instead of applying them; ApplyStateBlock applies the recorded set.
+ * With recording unimplemented, every state in every block was applied the
+ * moment it was recorded and never applied again after that -- so the live
+ * device state was whatever the last block to be BUILT had wanted, at every
+ * draw, for the rest of the run. That is why the front end's 2D draws were
+ * seen with ALPHATESTENABLE on and a GREATER/0 test they never asked for,
+ * which discarded every glyph whose vertex alpha was zero -- which is all of
+ * them, because 2D vertices are drawn with blending off and the alpha is not
+ * meant to be read at all.
+ *
+ * The game builds its blocks with Begin/End and replays them with Apply, and
+ * calls neither CreateStateBlock nor CaptureStateBlock.
+ *
+ * ponytail: render state, texture-stage state and texture bindings are
+ * recorded, which is the pixel state a draw depends on. Transform, material
+ * and light are applied immediately even inside a block -- they arrive by
+ * POINTER, so recording one means copying the struct, and nothing has needed
+ * it. CaptureStateBlock re-records nothing.
+ */
+#define SB_MAX      64      /* blocks; the front end builds about a dozen */
+#define SB_ENTRIES  512     /* recorded calls in one block */
+
+enum { SB_RS = 1, SB_TSS, SB_TEX };
+
+static struct { uint8_t kind; uint32_t a, b, c; } g_sb[SB_MAX][SB_ENTRIES];
+static unsigned g_sb_n[SB_MAX];
+static unsigned g_sb_rec;               /* 1 + block index while recording */
+
+static void sb_set(uint8_t kind, uint32_t a, uint32_t b, uint32_t c) {
+    switch (kind) {
+    case SB_RS:  if (a < D3D_MAXRS) g_d3d_rs[a] = b; break;
+    case SB_TSS: if (a < D3D_MAXSTAGE && b < D3D_MAXTSS) g_d3d_tss[a][b] = c;
+                 break;
+    case SB_TEX: if (a < D3D_MAXSTAGE) g_d3d_tex[a] = b; break;
+    }
+}
+
+/* Returns 1 when the call was recorded and must NOT be applied. */
+static int sb_record(uint8_t kind, uint32_t a, uint32_t b, uint32_t c) {
+    if (!g_sb_rec) return 0;
+    unsigned i = g_sb_rec - 1;
+    if (g_sb_n[i] < SB_ENTRIES) {
+        g_sb[i][g_sb_n[i]].kind = kind;
+        g_sb[i][g_sb_n[i]].a = a;
+        g_sb[i][g_sb_n[i]].b = b;
+        g_sb[i][g_sb_n[i]].c = c;
+        g_sb_n[i]++;
+    }
+    return 1;
+}
+
 static void d3ddev_SetRenderState(void) {
-    if (ARG(1) < D3D_MAXRS) g_d3d_rs[ARG(1)] = ARG(2);
+    if (!sb_record(SB_RS, ARG(1), ARG(2), 0))
+        sb_set(SB_RS, ARG(1), ARG(2), 0);
     RET(DD_OK); STDRET(3);
 }
 static void d3ddev_GetRenderState(void) {
@@ -2265,10 +2344,19 @@ static void d3ddev_GetRenderState(void) {
     RET(DD_OK); STDRET(3);
 }
 
-static void d3ddev_BeginStateBlock(void) { RET(DD_OK); STDRET(1); }
+static uint32_t g_sb_next = 1;          /* handles the game holds on to */
+
+static void d3ddev_BeginStateBlock(void) {
+    if (g_sb_next <= SB_MAX) {
+        g_sb_rec = g_sb_next;
+        g_sb_n[g_sb_rec - 1] = 0;
+    }
+    RET(DD_OK); STDRET(1);
+}
 static void d3ddev_EndStateBlock(void) {
-    static uint32_t next = 1;
-    if (ARG(1)) MEM32(ARG(1)) = next++;
+    if (ARG(1)) MEM32(ARG(1)) = g_sb_next;
+    if (g_sb_rec) g_sb_next++;
+    g_sb_rec = 0;
     RET(DD_OK); STDRET(2);
 }
 static void d3ddev_PreLoad(void) { RET(DD_OK); STDRET(2); }
@@ -2332,20 +2420,34 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
      * Every one of these mattered: blend/src/dst said which blend mode to
      * implement, atest/afunc/aref said the front end relies on the alpha test,
      * and the texture stage ops said alpha comes from the texture. */
-    { static unsigned n;
-      if (n++ < 3)
+    { static uint32_t seenf[32]; static unsigned nf; int newf = 1;
+      for (unsigned q = 0; q < nf; q++) if (seenf[q] == fvf) newf = 0;
+      if (newf && nf < 32) { seenf[nf++] = fvf;
           fprintf(stderr, "[d3d] draw prim=%u fvf=0x%X nv=%u ni=%u"
                           " tex=0x%08X/%ubpp/pf%u blend=%u src=%u dst=%u"
                           " atest=%u afunc=%u aref=%u cull=%u zen=%u zw=%u"
-                          " zf=%u ckey=%u tss=%u,%u,%u/%u,%u,%u\n",
+                          " zf=%u ckey=%u\n",
                   prim, fvf, nvert, nidx, g_d3d_tex[0],
                   g_d3d_tex[0] ? O_BPP(g_d3d_tex[0]) : 0,
                   g_d3d_tex[0] ? O_PF(g_d3d_tex[0]) : 0,
                   g_d3d_rs[27], g_d3d_rs[19], g_d3d_rs[20], g_d3d_rs[15],
                   g_d3d_rs[25], g_d3d_rs[24], g_d3d_rs[22], g_d3d_rs[7],
-                  g_d3d_rs[14], g_d3d_rs[23], g_d3d_rs[41],
-                  g_d3d_tss[0][1], g_d3d_tss[0][2], g_d3d_tss[0][3],
-                  g_d3d_tss[0][4], g_d3d_tss[0][5], g_d3d_tss[0][6]); }
+                  g_d3d_rs[14], g_d3d_rs[23], g_d3d_rs[41]);
+          fprintf(stderr, "[d3d]   lighting=%u colorvertex=%u ambient=%08X"
+                          " specular=%u shade=%u tfactor=%08X\n",
+                  g_d3d_rs[137], g_d3d_rs[134], g_d3d_rs[139],
+                  g_d3d_rs[29], g_d3d_rs[9], g_d3d_rs[26]);
+          /* D3DTSS_COLOROP 1, COLORARG1 2, COLORARG2 3, ALPHAOP 4,
+           * ALPHAARG1 5, ALPHAARG2 6, TEXCOORDINDEX 11. The argument
+           * encoding is DIFFUSE 0, CURRENT 1, TEXTURE 2, TFACTOR 3,
+           * SPECULAR 4, with 0x10 COMPLEMENT and 0x20 ALPHAREPLICATE. */
+          for (int sg = 0; sg < 2; sg++)
+              fprintf(stderr, "[d3d]   stage%d colour %u(%02X,%02X)"
+                              " alpha %u(%02X,%02X) tci=%u\n", sg,
+                      g_d3d_tss[sg][1], g_d3d_tss[sg][2], g_d3d_tss[sg][3],
+                      g_d3d_tss[sg][4], g_d3d_tss[sg][5], g_d3d_tss[sg][6],
+                      g_d3d_tss[sg][11]);
+      } }
 
     float wv[16], wvp[16];
     mat_mul(wv, g_d3d_xf[1], g_d3d_xf[2]);      /* world * view */
@@ -2492,7 +2594,8 @@ static void d3ddev_GetTexture(void) {
     RET(DD_OK); STDRET(3);
 }
 static void d3ddev_SetTexture(void) {
-    if (ARG(1) < D3D_MAXSTAGE) g_d3d_tex[ARG(1)] = ARG(2);
+    if (!sb_record(SB_TEX, ARG(1), ARG(2), 0))
+        sb_set(SB_TEX, ARG(1), ARG(2), 0);
     RET(DD_OK); STDRET(3);
 }
 static void d3ddev_GetTextureStageState(void) {
@@ -2503,12 +2606,20 @@ static void d3ddev_GetTextureStageState(void) {
     RET(DD_OK); STDRET(4);
 }
 static void d3ddev_SetTextureStageState(void) {
-    uint32_t st = ARG(1), k = ARG(2);
-    if (st < D3D_MAXSTAGE && k < D3D_MAXTSS) g_d3d_tss[st][k] = ARG(3);
+    if (!sb_record(SB_TSS, ARG(1), ARG(2), ARG(3)))
+        sb_set(SB_TSS, ARG(1), ARG(2), ARG(3));
     RET(DD_OK); STDRET(4);
 }
 static void d3ddev_ValidateDevice(void) {
     if (ARG(1)) MEM32(ARG(1)) = 1;            /* one pass, no extra work */
+    RET(DD_OK); STDRET(2);
+}
+static void d3ddev_ApplyStateBlock(void) {
+    uint32_t h = ARG(1);
+    if (h && h <= SB_MAX)
+        for (unsigned k = 0; k < g_sb_n[h - 1]; k++)
+            sb_set(g_sb[h - 1][k].kind, g_sb[h - 1][k].a,
+                   g_sb[h - 1][k].b, g_sb[h - 1][k].c);
     RET(DD_OK); STDRET(2);
 }
 static void d3ddev_stateblock1(void) { RET(DD_OK); STDRET(2); }
@@ -2629,7 +2740,7 @@ static void d3d_init(void) {
         {d3ddev_GetTextureStageState,"IDirect3DDevice7::GetTextureStageState"},
         {d3ddev_SetTextureStageState,"IDirect3DDevice7::SetTextureStageState"},
         {d3ddev_ValidateDevice,      "IDirect3DDevice7::ValidateDevice"},
-        {d3ddev_stateblock1,         "IDirect3DDevice7::ApplyStateBlock"},
+        {d3ddev_ApplyStateBlock,     "IDirect3DDevice7::ApplyStateBlock"},
         {d3ddev_stateblock1,         "IDirect3DDevice7::CaptureStateBlock"},
         {d3ddev_stateblock1,         "IDirect3DDevice7::DeleteStateBlock"},
         {d3ddev_CreateStateBlock,    "IDirect3DDevice7::CreateStateBlock"},
