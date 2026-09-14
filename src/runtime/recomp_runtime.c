@@ -168,8 +168,9 @@ static DWORD g_st_from, g_st_for;
  * identified by its block's line count and its own line number -- which is
  * how a script line is named when its address is different every run.
  */
-static int g_nocond_lines = -1, g_nocond_line = -1, g_nocond_done;
-static int g_nocond_slot = -1;   /* and operand 0 must be this variable */
+#define NOCOND_MAX 8
+static struct { int lines, line, slot, done; } g_nocond[NOCOND_MAX];
+static unsigned g_nocond_n;
 
 static int      g_nodedump = -1;
 
@@ -575,7 +576,7 @@ static DWORD WINAPI scripttrace_window(LPVOID unused) {
  */
 static void focom_trace_extra(uint32_t va) {
     if (!g_scripttrace && !g_nolibtrace && !g_varpoke_on
-        && g_nodedump < 0 && g_nocond_lines < 0) return;
+        && g_nodedump < 0 && !g_nocond_n) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -598,7 +599,7 @@ static void focom_trace_extra(uint32_t va) {
         return;
     }
     if (!g_scripttrace && !g_varpoke_on && g_nodedump < 0
-        && g_nocond_lines < 0) return;
+        && !g_nocond_n) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -656,24 +657,27 @@ static void focom_trace_extra(uint32_t va) {
         /* Line count and line number alone are not an identity: this front
          * end has several 25-line blocks and the first one reached got the
          * patch. Operand 0's slot pins it -- for the "For CD" While that is
-         * variable 83, "Min CD Number". */
-        int nocond_here = !g_nocond_done && (int)n == g_nocond_lines
-                       && (int)ln == g_nocond_line && T_OK(args);
-        if (nocond_here && g_nocond_slot >= 0) {
-            uint32_t op0 = args + 0xC;
-            nocond_here = (int)((MEM32(args) >> 16) & 0x3Fu) - 3 > 0
-                       && T_OK(op0 + 8)
-                       && (MEM32(op0) & 0xF000u) == 0x1000u
-                       && (int)MEM32(op0 + 8) == g_nocond_slot;
-        }
-        if (nocond_here) {
+         * variable 83, "Min CD Number". A slot of -1 means "any". Repeatable,
+         * because a flow can have more than one gate in it. */
+        for (unsigned q = 0; q < g_nocond_n && T_OK(args); q++) {
+            if (g_nocond[q].done) continue;
+            if ((int)n != g_nocond[q].lines || (int)ln != g_nocond[q].line)
+                continue;
+            if (g_nocond[q].slot >= 0) {
+                uint32_t op0 = args + 0xC;
+                if ((int)((MEM32(args) >> 16) & 0x3Fu) - 3 <= 0) continue;
+                if (!T_OK(op0 + 8)) continue;
+                if ((MEM32(op0) & 0xF000u) != 0x1000u) continue;
+                if ((int)MEM32(op0 + 8) != g_nocond[q].slot) continue;
+            }
             uint32_t was = MEM32(args);
             MEM32(args) = (was & ~0x003F0000u) | (3u << 16);
-            g_nocond_done = 1;
+            g_nocond[q].done = 1;
             fprintf(stderr, "[nocond] block %08X line %d of %u:"
                             " header %08X -> %08X, %d operands -> 0\n",
                     g_ecx, (int)ln, n, was, MEM32(args),
                     (int)((was >> 16) & 0x3Fu) - 3);
+            break;
         }
         if (g_nodedump >= 0 && (int)ln == g_nodedump && T_OK(args)) {
             /* [entry+0x18] and not [entry+8]: While::Execute takes three
@@ -1336,6 +1340,7 @@ static long   g_mouse_at_x, g_mouse_at_y;        /* where we last aimed */
 void ddraw_mouse_move(long dx, long dy);         /* ddraw_shims.c */
 void ddraw_mouse_button(int down);               /* ddraw_shims.c */
 void ddraw_key(unsigned scancode, int down);     /* ddraw_shims.c */
+void host_key_state(unsigned vk, int down);       /* crt_shims.c */
 void ddraw_uimap_reset(void);                    /* ddraw_shims.c */
 
 /*
@@ -1387,11 +1392,13 @@ static DWORD WINAPI clicker(LPVOID unused) {
             UINT sc = MapVirtualKeyA(vk, 0 /* MAPVK_VK_TO_VSC */);
             fprintf(stderr, "[key] vk 0x%02X scan 0x%02X\n", vk, sc);
             ddraw_key(sc, 1);
+            host_key_state(vk, 1);
             PostMessageA(h, WM_KEYDOWN, vk, (LPARAM)(1 | (sc << 16)));
             UINT ch = MapVirtualKeyA(vk, 2 /* MAPVK_VK_TO_CHAR */) & 0xFFFF;
             if (ch) PostMessageA(h, WM_CHAR, ch, (LPARAM)(1 | (sc << 16)));
             Sleep(g_click_hold);
             ddraw_key(sc, 0);
+            host_key_state(vk, 0);
             PostMessageA(h, WM_KEYUP, vk,
                          (LPARAM)(0xC0000001u | (sc << 16)));
             Sleep(g_click_gap);
@@ -1598,10 +1605,12 @@ int main(int argc, char** argv) {
             g_vx_slot = (uint32_t)strtoul(argv[++i], NULL, 0);
             g_vx_ms = (DWORD)strtoul(argv[++i], NULL, 0);
         }
-        else if (!strcmp(argv[i], "--nocond") && i + 3 < argc) {
-            g_nocond_lines = (int)strtol(argv[++i], NULL, 0);
-            g_nocond_line = (int)strtol(argv[++i], NULL, 0);
-            g_nocond_slot = (int)strtol(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--nocond") && i + 3 < argc
+                 && g_nocond_n < NOCOND_MAX) {
+            g_nocond[g_nocond_n].lines = (int)strtol(argv[++i], NULL, 0);
+            g_nocond[g_nocond_n].line = (int)strtol(argv[++i], NULL, 0);
+            g_nocond[g_nocond_n].slot = (int)strtol(argv[++i], NULL, 0);
+            g_nocond_n++;
         }
         else if (!strcmp(argv[i], "--nodedump") && i + 1 < argc)
             g_nodedump = (int)strtol(argv[++i], NULL, 0);

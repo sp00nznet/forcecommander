@@ -536,7 +536,26 @@ static void u32_CharPrevA(void) {
 static void u32_ShowCursor(void) { RET((uint32_t)ShowCursor((BOOL)ARG(0))); STDRET(1); }
 static void u32_LoadCursorA(void) { RET(h2i(LoadCursorA(NULL, (LPCSTR)(uintptr_t)ARG(1)))); STDRET(2); }
 static void u32_SetCursor(void) { RET(h2i(SetCursor((HCURSOR)i2h(ARG(0))))); STDRET(1); }
-static void u32_GetKeyState(void) { RET((uint32_t)(int32_t)GetKeyState((int)ARG(0))); STDRET(1); }
+/*
+ * GetKeyState has to answer for the SYNTHETIC keys.
+ *
+ * Forwarding to the host's GetKeyState reads the state of this thread's own
+ * input queue, and --key posts messages rather than injecting real input, so
+ * it always answered "not pressed" -- which is the wrong answer for anything
+ * the game checks rather than receives. A key set by host_key_state wins; the
+ * host's answer is the fallback, so a real keyboard still works.
+ */
+static uint8_t g_vkstate[256];
+
+void host_key_state(unsigned vk, int down) {
+    if (vk < 256) g_vkstate[vk] = down ? 0x80 : 0;
+}
+
+static void u32_GetKeyState(void) {
+    unsigned vk = ARG(0) & 0xFF;
+    if (g_vkstate[vk]) { RET(0xFFFFFF80u); STDRET(1); return; }
+    RET((uint32_t)(int32_t)GetKeyState((int)ARG(0))); STDRET(1);
+}
 static void u32_GetStockObject(void) { RET(h2i(GetStockObject((int)ARG(0)))); STDRET(1); }
 
 /* ------------------------------------------------- MSVCRT C++ runtime
