@@ -1097,9 +1097,18 @@ static void dev_GetCapabilities(void) {
     RET(DI_OK); STDRET(2);
 }
 
+/*
+ * No input: zero the buffer. A device that answers cleanly with nothing
+ * pressed is what lets the game run its own loop.
+ *
+ * Synthetic input used to be fed in here, as DIMOUSESTATE deltas -- home the
+ * cursor into a corner with a large negative delta, walk it out to a known
+ * position, then set rgbButtons[0]. It fired, and the front end did not move a
+ * pixel: the game does not take its cursor from this device. Input goes
+ * through the window procedure, so --click posts real window messages now.
+ * See host_input() in recomp_runtime.c.
+ */
 static void dev_GetDeviceState(void) {
-    /* No input: zero the buffer. A device that answers cleanly with nothing
-     * pressed is what lets the game run its own loop. */
     uint32_t n = ARG(1), p = ARG(2);
     if (p && n && n < 0x10000)
         memset((void*)(uintptr_t)ADDR(p), 0, n);
@@ -1108,6 +1117,8 @@ static void dev_GetDeviceState(void) {
 
 static void dev_GetDeviceData(void) {
     /* Buffered mode: report zero events by writing 0 back through pdwInOut. */
+    { static unsigned c; if (++c % 500 == 1)
+        fprintf(stderr, "[di] GetDeviceData #%u\n", c); }
     if (ARG(3)) MEM32(ARG(3)) = 0;
     RET(DI_OK); STDRET(5);
 }

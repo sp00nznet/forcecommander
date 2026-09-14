@@ -458,6 +458,39 @@ static LRESULT CALLBACK win_trampoline(HWND h, UINT m, WPARAM w, LPARAM l) {
     return (LRESULT)(int32_t)r;
 }
 
+/*
+ * The game's main window, and why the host has to know about it.
+ *
+ * There are two windows. The host makes one at startup, because something has
+ * to exist before the game does anything, and the game then makes its own
+ * through CreateWindowExA -- bound here to its real window procedure through
+ * win_trampoline. Windows delivers WM_MOUSEMOVE and WM_LBUTTONDOWN to whatever
+ * window the pointer is over, and that is the host's, whose procedure does not
+ * know the game exists. Pixels went to one window and input to the other.
+ *
+ * Presenting into the game's window instead was tried and is much worse: the
+ * window belongs to the thread that created it, cross-thread GDI to it dropped
+ * the frame rate from 3,000 presents a run to 39, and the ShowWindow needed to
+ * make it visible SENDS a message and blocks on that thread's pump.
+ *
+ * So the host window keeps the pixels and forwards the input. This is the
+ * handle pair it needs.
+ */
+static HWND     g_win_main;
+static uint32_t g_win_main_proc;
+
+static void win_main_set(HWND h, uint32_t proc) {
+    g_win_main = h;
+    g_win_main_proc = proc;
+}
+
+void* win_main_hwnd(void) { return (void*)g_win_main; }
+
+uint32_t win_main(uint32_t* target_hwnd) {
+    if (target_hwnd) *target_hwnd = g_win_main ? h2i(g_win_main) : 0;
+    return g_win_main_proc;
+}
+
 static void u32_RegisterClassA(void) {
     uint32_t c = ARG(0);
     if (!c) { RET(0); STDRET(1); return; }
@@ -526,6 +559,9 @@ static void u32_CreateWindowExA(void) {
     if (proc) win_bind(h, proc);
     else win_bind(h, 0);                 /* still record it, for the style */
     win_bind_style(h, ARG(3), ARG(0));
+    /* Remember the game's main window so the host's own window can forward
+     * input to its procedure. See win_main() and host_input(). */
+    if (proc && !ARG(8)) win_main_set(h, proc);
     RET(h2i(h)); STDRET(12);
 }
 static void u32_DefWindowProcA(void) {
