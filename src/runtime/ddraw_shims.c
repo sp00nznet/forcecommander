@@ -640,6 +640,13 @@ static void dd_EnumSurfaces(void) { RET(DD_OK); STDRET(5); }
 
 static void sf_Lock(void) {
     uint32_t s = ARG(0), desc = ARG(2);
+    /* Who locks a 256x256 32-bit surface? The font sheets are the ones that
+     * come out bottom-up, and the lifted function that fills them is the one
+     * place a fix belongs. */
+    { static unsigned n;
+      if (s && O_W(s) == 256 && O_H(s) == 256 && O_BPP(s) == 32 && n++ < 10)
+          fprintf(stderr, "[dd] Lock 256x256x32 0x%08X from lifted 0x%08X\n",
+                  s, g_cur_func); }
     if (desc) {
         for (uint32_t i = 0; i < DDSD2_SIZE; i += 4) MEM32(desc + i) = 0;
         MEM32(desc + 0x00) = DDSD2_SIZE;
