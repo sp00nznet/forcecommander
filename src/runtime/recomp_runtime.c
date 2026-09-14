@@ -75,6 +75,39 @@ void ddraw_set_drawprobe(int x, int y);       /* ddraw_shims.c */
 #define VIS_RUN_LINE 0x00512170u
 #define VIS_STEP      0x005127E0u
 static int g_scripttrace;
+/*
+ * --nolib: the same GetLibrary report as --scripttrace, on its own.
+ *
+ * A script line that names a subsystem the exe never registered gets NULL
+ * back and does nothing, silently -- which is the shape of a front-end item
+ * that runs its whole Case and changes nothing. That report is worth having
+ * without the per-line flood, which is hundreds of megabytes a run.
+ */
+static int g_nolibtrace;
+
+/*
+ * --scripttracefrom MS [--scripttracefor MS]: a window, not a whole run.
+ *
+ * The script trace is one line per executed script line per frame, which is
+ * hundreds of megabytes a minute -- unreadable, and slow enough to change
+ * what the game does. What a question about a click needs is the twenty
+ * seconds around the click, so a host thread turns the trace on at one time
+ * and off at another.
+ */
+static DWORD g_st_from, g_st_for;
+
+static DWORD WINAPI scripttrace_window(LPVOID unused) {
+    (void)unused;
+    Sleep(g_st_from);
+    g_scripttrace = 1;
+    fprintf(stderr, "[scripttrace] on at %lu ms\n", g_st_from);
+    if (g_st_for) {
+        Sleep(g_st_for);
+        g_scripttrace = 0;
+        fprintf(stderr, "[scripttrace] off after %lu ms\n", g_st_for);
+    }
+    return 0;
+}
 
 /*
  * sub_005127E0 is GamePPSysCodeContainer's "run the current line":
@@ -95,7 +128,7 @@ static int g_scripttrace;
  * analysis/rtti.json maps to a class name.
  */
 static void focom_trace_extra(uint32_t va) {
-    if (!g_scripttrace) return;
+    if (!g_scripttrace && !g_nolibtrace) return;
     /*
      * GamePPVisLibraryManager::GetLibrary(id) is a bounds check and one load
      * from a 1024-entry table at [this+8] -- see sub_0052C300. A script line
@@ -108,10 +141,16 @@ static void focom_trace_extra(uint32_t va) {
         uint32_t id = MEM32(g_esp + 4);
         uint32_t tab = g_ecx >= 0x00200000u ? MEM32(g_ecx + 8) : 0;
         uint32_t lib = (tab >= 0x00200000u && id < 1024) ? MEM32(tab + id * 4) : 0;
-        if (!lib) fprintf(stderr, "[nolib] t%lu GetLibrary(%u) -> NULL\n",
-                          GetCurrentThreadId(), id);
+        /* Once per id: the same missing subsystem is asked for every frame. */
+        static uint8_t said[1024];
+        if (!lib && id < 1024 && !said[id]) {
+            said[id] = 1;
+            fprintf(stderr, "[nolib] t%lu GetLibrary(%u) -> NULL\n",
+                    GetCurrentThreadId(), id);
+        }
         return;
     }
+    if (!g_scripttrace) return;
     if (va == VIS_STEP) {
         uint32_t ctx = MEM32(g_esp + 4);
         uint32_t n = (g_ecx >= 0x00200000u) ? MEM32(g_ecx + 0x1C) : 0;
@@ -935,6 +974,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--stubs")) g_list_stubs = 1;
         else if (!strcmp(argv[i], "--threadtrace")) g_threadtrace = 1;
         else if (!strcmp(argv[i], "--scripttrace")) g_scripttrace = 1;
+        else if (!strcmp(argv[i], "--nolib")) g_nolibtrace = 1;
+        else if (!strcmp(argv[i], "--scripttracefrom") && i + 1 < argc)
+            g_st_from = (DWORD)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--scripttracefor") && i + 1 < argc)
+            g_st_for = (DWORD)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--stlwatch") && i + 1 < argc)
             g_stlwatch = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--run")) run = 1;
@@ -949,6 +993,8 @@ int main(int argc, char** argv) {
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     if (g_click_n || g_key_n)
         CloseHandle(CreateThread(NULL, 0, clicker, NULL, 0, NULL));
+        if (g_st_from) CloseHandle(CreateThread(NULL, 0,
+                scripttrace_window, NULL, 0, NULL));
 
     printf("Force Commander recomp host\n");
     printf("  lifted functions in dispatch: %u\n", recomp_dispatch_count);
