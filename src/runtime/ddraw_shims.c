@@ -2281,7 +2281,7 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
     rs_from_surface(&target, rt);
     rs_from_surface(&tex, g_d3d_tex[0]);
     /* The depth buffer is the surface the game attached to the render target;
-     * DDSCAPS_ZBUFFER is 0x20000 and its DDPIXELFORMAT is a 16-bit G mask. */
+     * DDSCAPS_ZBUFFER is 0x20000. */
     uint32_t zs = O_ATTACH(rt);
     rs_from_surface(&zbuf, (zs && (O_CAPS(zs) & 0x20000u)) ? zs : 0);
     if (!target.bits) return;
@@ -2289,8 +2289,7 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
     /* The pixel state the game is actually using, on the first few draws.
      * Every one of these mattered: blend/src/dst said which blend mode to
      * implement, atest/afunc/aref said the front end relies on the alpha test,
-     * and the texture stage ops said alpha comes from the texture and not from
-     * a diffuse the FVF does not even carry. */
+     * and the texture stage ops said alpha comes from the texture. */
     { static unsigned n;
       if (n++ < 3)
           fprintf(stderr, "[d3d] draw prim=%u fvf=0x%X nv=%u ni=%u"
@@ -2316,12 +2315,12 @@ static void d3d_rasterise(uint32_t prim, uint32_t fvf, uint32_t verts,
     /* D3DRENDERSTATE_ALPHABLENDENABLE 27, SRCBLEND 19, DESTBLEND 20,
      * ALPHATESTENABLE 15, ALPHAFUNC 25, ALPHAREF 24. D3DBLEND_SRCALPHA is 5
      * and INVSRCALPHA is 6; D3DCMP_GREATER is 5, which with a reference of 0
-     * is "draw anything that is not fully transparent". */
+     * is "draw anything that is not fully transparent". ZENABLE is 7,
+     * ZWRITEENABLE 14, ZFUNC 23. */
     rstate_t st;
     st.blend = (g_d3d_rs[27] && g_d3d_rs[19] == 5 && g_d3d_rs[20] == 6);
     st.alpha_test = (g_d3d_rs[15] && g_d3d_rs[25] == 5);
     st.alpha_ref = (int)(g_d3d_rs[24] & 0xFF);
-    /* D3DRENDERSTATE_ZENABLE 7, ZWRITEENABLE 14, ZFUNC 23. */
     st.z_test = (g_d3d_rs[7] != 0);
     st.z_write = (g_d3d_rs[14] != 0);
     st.z_func = g_d3d_rs[23] ? (int)g_d3d_rs[23] : 4;

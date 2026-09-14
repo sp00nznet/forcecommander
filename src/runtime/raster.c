@@ -212,8 +212,25 @@ static uint32_t tri(const rsurf_t* rt, const rsurf_t* zb, const rsurf_t* tex,
                 if (st->z_test && !zpass(st->z_func, nz, zrow[x])) continue;
             }
 
-            uint32_t alpha = (a->c >> 24) & 0xFF;   /* diffuse alpha */
-            if (!(fvf_has_diffuse)) alpha = 0xFF;
+            /*
+             * Alpha comes from the TEXTURE, not from the vertex diffuse.
+             *
+             * Force Commander's front end draws its menu with a diffuse of
+             * 0x00FC0000 -- a real red, and an alpha of ZERO -- against
+             * ALPHAOP = MODULATE, ALPHAARG1 = TEXTURE, ALPHAARG2 = CURRENT.
+             * Reading that literally (alpha = texture * diffuse) multiplies
+             * every glyph by zero, and with the alpha test set to "greater
+             * than 0" the whole menu is discarded: 6 of 500 UI draws painted
+             * anything. Treating stage 0's CURRENT alpha as opaque is what
+             * puts the menu on screen, and the menu is the evidence.
+             *
+             * ponytail: so the diffuse alpha is ignored everywhere. The right
+             * shape is a real texture-stage evaluator -- eight stages, the
+             * colour and alpha argument trees, and D3DTA_COMPLEMENT -- and the
+             * moment something wants a vertex-alpha fade, that is the job.
+             */
+            uint32_t alpha = 0xFF;
+            (void)fvf_has_diffuse;
             if (tex && tex->bits) {
                 float u = aw * a->u + bw * b->u + cw * c->u;
                 float v = aw * a->v + bw * b->v + cw * c->v;

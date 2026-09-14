@@ -28,7 +28,23 @@ and the game says so itself, through its own message box:
 
 so only one is emitted here.
 
+`Run` takes an object-template id, and which one decides what the game does.
+`2 1 6` is what the installer writes: "Trasse - Day", whose own code.bin is 44
+bytes and whose inheritID is `2 1 12` = "Endor - Dawn", the front end. The
+campaign maps are the other type-2 subtype-1 templates, and each one's
+`info.pro` in the .rpk carries its id and boot thread:
+
+    Tatooine - Day     2 1 7    boot 3     196,662 bytes of code
+    Endor - Dusk       2 1 13   boot 59     66,614
+    Coruscant - Dusk   2 1 25   boot 0      66,616
+    Abridon - Day      2 1 5    boot 0      48,384
+    Trasse - Night     2 1 21   boot 43     22,041
+
+--run skips the front end and boots one of them directly, which is the only
+way into a map while the menu cannot be clicked.
+
     py -3 tools/make_focom_ini.py G:\\path\\to\\install > Focom.ini
+    py -3 tools/make_focom_ini.py --run "2 1 7" G:\\path\\to\\install
     py -3 tools/make_focom_ini.py --selftest
 """
 import os
@@ -59,11 +75,13 @@ NEEDED_FILES = ['Resource/appname.ini',
                 'Resource/forcecommand/forcecommand.gpl']
 
 
-def render(target):
+def render(target, run=None):
     """The script text for an install rooted at `target`."""
     target = target.rstrip('\\/')
     out = []
     for key, arg in TEMPLATE:
+        if key == 'Run' and run:
+            arg = run
         if arg is None:
             out.append(key)
         else:
@@ -101,11 +119,20 @@ def selftest():
         if len(p) == 2 and '\\' in p[1]:
             assert p[1].startswith(t), l
     assert render('C:\\Games\\Focom\\') == s, 'trailing separator not trimmed'
+    # --run replaces the template id and nothing else.
+    r = render(t, '2 1 7')
+    assert 'Run               2 1 7' in r, r
+    assert '2 1 6' not in r
+    assert len(r.strip().split('\n')) == len(lines)
     print('selftest ok: %d directives' % len(lines))
 
 
 if __name__ == '__main__':
     a = sys.argv[1:]
+    run = None
+    if len(a) >= 2 and a[0] == '--run':
+        run = a[1]
+        a = a[2:]
     if a and a[0] == '--selftest':
         selftest()
     elif a:
@@ -114,7 +141,7 @@ if __name__ == '__main__':
         if miss:
             sys.stderr.write('warning: %s is missing:\n  %s\n'
                              % (target, '\n  '.join(miss)))
-        sys.stdout.write(render(target))
+        sys.stdout.write(render(target, run))
     else:
         sys.stderr.write(__doc__)
         sys.exit(2)
