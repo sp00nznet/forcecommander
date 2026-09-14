@@ -579,42 +579,56 @@ View Installation
 Show Credits
 ```
 
-The ceiling is recorded in `raster.c`: the diffuse alpha is now ignored
+The ceiling is recorded in `raster.c`: the diffuse alpha is ignored
 everywhere, and the right shape is a real texture-stage evaluator.
 
-### There were two windows
+`--drawprobe X Y` settled which draws that actually affects, by reading one
+pixel before and after every draw and printing the state of the ones that
+changed it. The menu PANEL is FVF 0x112, which has no diffuse at all, so it
+draws the same either way -- the panel appearing was never evidence the alpha
+was right. The TEXT is FVF 0x142, and its vertex diffuse alpha is zero in
+every batch sampled across a run: 0x00000000, 0x00FC0000, 0x0008108E,
+0x001C00FA. With the faithful product the panel draws and the text does not.
+
+### There were two windows, and now there is one
 
 Clicking that menu did nothing for a long time, and the reason was not the
 click.
 
-The host makes a window at startup, because something has to exist before the
-game does anything. The game then makes its own through `CreateWindowExA`,
-which `shims_impl.c` binds to its real window procedure through
-`win_trampoline`. Windows delivers `WM_MOUSEMOVE` and `WM_LBUTTONDOWN` to
-whichever window the pointer is over -- the host's, whose procedure did not
-know the game existed. **Pixels went to one window and input to the other.**
+From outside it looked like exactly what it was: a fullscreen white window
+with "Force Commander" in yellow at the bottom -- the game's own, showing its
+GDI loading panel -- and a smaller one beside it with the rendered frames. The
+host makes the second because something has to exist before the game calls
+`CreateWindowExA`, and `shims_impl.c` binds the game's window to its real
+procedure through `win_trampoline`. So Windows delivered `WM_MOUSEMOVE` and
+`WM_LBUTTONDOWN` to the game's window and the pixels went to the host's.
+**Pixels in one window, input in the other.**
 
 Three things were tried, and the order is the useful part:
 
 - **DirectInput.** `DIMOUSESTATE` deltas, homed into a corner with a large
-  negative delta and walked out to a known position, then `rgbButtons[0]`. It
-  fired and the front end did not move a pixel: the game does not take its
-  cursor from that device.
-- **Presenting into the game's window** instead of the host's. It works and it
-  is much worse -- **39 presents a run against 3,000** -- because cross-thread
-  GDI to another thread's window is that slow, and the `ShowWindow` needed to
-  make it visible SENDS a message and blocks on that thread's pump.
-- **Posting window messages**, which works. The destination is the point:
-  posting to the *host* window put them in the main thread's queue, and the
-  main thread is inside lifted code from the entry point until the game exits,
-  so nobody ever pumped them. The game's window belongs to the Ronin worker
-  that created it, and that worker's step function (`sub_00550F60`) pumps every
-  frame.
+  negative delta and walked out to a known position, then `rgbButtons[0]`.
+  This is what the game actually reads, and it works -- see below.
+- **Posting window messages.** The destination is the point: posting to the
+  *host* window put them in the main thread's queue, and the main thread is
+  inside lifted code from the entry point until the game exits, so nobody
+  ever pumped them. The game's window belongs to the Ronin worker that
+  created it, and that worker's step function (`sub_00550F60`) pumps every
+  frame -- but its procedure discards the mouse messages anyway.
+- **Presenting into the game's window**, which is what it does now. This was
+  recorded once as "39 presents a run against 3,000, because cross-thread GDI
+  is that slow", and that diagnosis was wrong. Cross-thread
+  `GetDC`/`BitBlt`/`ReleaseDC` is fine: **4,400 presents in 130 s** against
+  about 3,000 into the host window.
 
-So `host_input()` forwards mouse and key messages from the host window to the
-game's procedure -- correct, and documented as not firing yet, because nothing
-pumps that queue -- and `--click X Y` (repeatable, with `--clickat` and
-`--clickgap`) posts a move, a press and a release to the game's own window.
+What was actually slow was never GDI. It was `ShowWindow`, which SENDS
+`WM_SHOWWINDOW` -- and every window here belongs to a thread other than the
+caller's, the host's to the main thread, which never pumps. Hiding the host
+window from the present path reproduced it exactly: one present, then a
+watchdog with `CDD7FSScreen::Present` at the top of the entry trace. So the
+host window is simply not shown when the game is going to make its own
+(`host_create_window` takes a `show` argument; `--splash` passes 1, because
+there the host window IS the one being looked at).
 
 ### --uimap, so clicking is not guesswork
 
@@ -634,6 +648,45 @@ where the buttons are even when the text is not legible:
 the front end navigates: every menu colour and both button glyphs change on the
 first click, and the second brings up a page whose four items sit at the same
 four rows with different widths, loading 102 new 64x64 textures on the way.
+
+## State blocks, and the backdrop that was never drawn
+
+The frame was a menu panel on black, and the black was a bug with a name.
+
+`BeginStateBlock` / `EndStateBlock` / `ApplyStateBlock` were no-ops. Direct3D
+RECORDS state-setting calls between Begin and End instead of applying them,
+and applies the recorded set on Apply; with recording unimplemented, every
+state in every block was applied the instant it was RECORDED and never
+applied again. The live device state was therefore whatever the last block to
+be built had wanted, at every draw, for the whole run.
+
+Logging the pixel state for the first draw of each FVF instead of the first
+three draws overall shows two states where there had been one:
+
+```
+fvf=0x112  blend=0 atest=0 cull=1 zw=1 lighting=1      the 3D scene
+fvf=0x142  blend=1 src=5 dst=6 atest=1 aref=0 zw=0     the 2D front end
+```
+
+Before the fix every draw was seen with the 2D state: blending on, depth
+writes off, and an alpha test the 3D geometry never asked for. So the
+animated backdrop behind the main menu -- AT-ATs walking, stormtroopers,
+explosions, smoke columns -- was blended into nothing and depth-sorted by
+accident.
+
+It renders now. Recorded: render state, texture-stage state and texture
+bindings, which is the pixel state a draw depends on. Transform, material and
+light are applied immediately even inside a block, because they arrive by
+pointer; this game calls neither `CreateStateBlock` nor `CaptureStateBlock`.
+
+A related non-finding, worth writing down because it looked certain.
+`D3DRENDERSTATE_LIGHTING` is on with `D3DRENDERSTATE_COLORVERTEX` off, which
+in DX7 means the pipeline ignores the vertex diffuse and lights from the
+material -- so the menu's zero vertex alpha would be irrelevant. It is on for
+the FVF 0x112 draws only, which carry a normal; the front end's 2D work sets
+LIGHTING off and is lit by its own vertex diffuse. `SetMaterial` stores its
+`D3DMATERIAL7` now (white diffuse, white ambient, zero emissive) and a real
+N.L term is what would make it matter.
 
 ## The menu works. Two of its four items do.
 
@@ -731,20 +784,99 @@ What it is not:
 - **Not the game's own diagnostics.** With `--poke 0x00833878 1` the assert
   and log machinery is live and reports nothing.
 
-`Resource/Players` and `Resource/GameFiles` are empty, and the disc does not
-carry them -- they are created at runtime -- so a missing player profile
-remains the best guess. `missionSelector.gtx`'s `NoName`, `blankname`,
-`namealready` and `MaxNames` say the front end has a name-entry flow, and both
-gated items are the two that would need a name.
+### The frontier: a While loop that never exits
+
+`--scripttracefrom MS --scripttracefor MS` bounds the trace to a window around
+the click -- it is one line per executed script line per frame otherwise,
+hundreds of megabytes a minute and slow enough to change what the game does --
+and `tools/stepdecode.py` collapses it to the sequence each block ran, naming
+every line's class out of `analysis/rtti.json`. Nine seconds is 30,000 `[step]`
+lines and it says this:
+
+```
+309-block  L212 Switch  L213 Case  L217 Case  L219 Case  L221 DefaultCase
+           L222 <hit test>  L223 EndSwitch  L224 <event fn>  L226 EndIf
+           L225 <call>  ->  217-block L0..L20, L21 Else, L23 EndIf,
+                            L27 Case, L63 EndSwitch, L64, L65 Case, L215
+25-block   L0 Wait If  ->  L1 L2  L3 While  L4 L5  L6 Wait  L7 EndWhile
+           L3 L4 L5 L6 L7 L3 L4 L5 L6 L7 ... for the rest of the run
+```
+
+The last line is the finding. **A 25-line block that had been parked on a
+`Wait If` at L0 for the whole run wakes up on the click and enters a
+`While ... Wait ... EndWhile` that never exits.** So the message the Single
+Player case posts IS consumed, something IS waiting for the page, and what it
+waits for never becomes true. Three minutes after the click, `--uimap` reports
+no rectangle the run had not already drawn.
+
+The condition at L4 goes through `sub_00655280`, which is the generic argument
+evaluator -- `word[ecx] >> 12` indexes a sixteen-entry table at 0x007C45D8 --
+so naming what it reads means decoding the argument node, and that is the next
+step.
+
+### Two things that were missing and are not the cause
+
+**Nothing the click takes is a missing subsystem.** `--nolib` reports every
+`GamePPVisLibraryManager::GetLibrary` that comes back NULL, which is a script
+line naming a subsystem the exe never registered -- it does nothing, silently,
+which is exactly the shape of an item that runs its whole Case and changes
+nothing. Measured: the run asks for every id from 0 to 1023 at startup and
+nothing after that. 899 `Player`, 898 `Save Game`, 937 `Options`, 912 `Music`
+and 57 `Message` are all registered.
+
+**The install was missing 260 MB.** `Resource\Music` and `Resource\Movies`
+had never been copied out of the disc image, and the game says nothing about
+it. The music file names are not incidental -- they are the exact state names
+in the exe's own 63-entry state table at 0x008595E0, which is indexed by the
+story state word at 0x00883CA8:
+
+```
+Resource/Music/1201 - OpeningScreen.imu     stateEnterPlayerName
+Resource/Music/1202 - MasterScreen.imu      stateSinglePlayerScreen
+Resource/Music/Imperial Rage.imu            stateCredits
+Resource/Music/1001 - Tatooine1.imu         stateTatooine1
+```
+
+`--poison 0x00883CA8` measured that word as never leaving `STATE_NULL` in a
+whole run, through the opening screen and a click. `tools/iso_extract.py`
+copies both directories out with their real names, which means reading the
+image's JOLIET tree: the ISO-9660 one is 8.3 and truncated,
+`1201-O~1.IMU` against the `1201 - OpeningScreen.imu` the game asks for.
+
+`timeSetEvent` also delivers its callback now instead of returning an id and
+calling nothing -- iMUSE runs on that timer, and the exe carries "iMUSE timer
+bug encountered, if you get sound this time, please note it in the bug db."
+beside its error paths. The callback is lifted code on a host thread with its
+own target stack, TIB and saved machine state, which is what `CreateThread`
+already does. The game still asks for a 20 ms periodic timer four times during
+audio startup and then releases its sound buffer, so the self-test fails for
+some other reason.
+
+`Resource/Players` and `Resource/GameFiles` are still empty and the disc does
+not carry them -- they are created at runtime. A missing player profile stays
+on the list: `missionSelector.gtx` has `NoName`, `blankname`, `namealready`
+and `MaxNames`, so the front end has a name-entry flow, `stateEnterPlayerName`
+is one of the 63 states, and both gated items are the two that would need a
+name. Creating `game\Players` -- which the game probes with
+`FindFirstFileA` and which did not exist -- changed nothing.
 
 ## Where it is now
 
-Not in a mission. The front end renders, takes input, and activates two of its
-four items; the two that lead to a game stop on one script condition, which is
-named above to the line.
+Not in a mission.
 
-Booting a map directly is not a way round it:
-`tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`, the
-game gets 625,000 allocations of template compilation deep and then exits
-cleanly, because that template's `inheritID` is `0 0 0` and the engine and
-renderer init live in the front end's own script.
+The front end renders its animated backdrop and its menu, in one window, at
+4,400 presents in 130 s. It takes a click and activates three of its five
+interactive elements. The two that lead to a game post their message, are
+heard, and wake a script block that then waits forever on one condition --
+which is `L4` of a 25-line block, reached through a `While` at `L3`, and named
+above as precisely as the trace can name it.
+
+Booting a map directly is not a way round it, and the reason is structural.
+`tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the
+game gets 625,000 allocations of template compilation deep and exits cleanly,
+because that template's `inheritID` is `0 0 0` while the front end's
+(`2 1 6`, `Trasse - Day`) is `2 1 12` = `Endor - Dawn`. A loose
+`info.pro` on disk does not override the one in the .rpk -- replacing it with
+the word GARBAGE changes nothing, to the allocation -- and two `Run`
+directives load both templates (641,417 allocations against 625,100) and still
+render nothing. The route into a mission is through the front end.

@@ -346,13 +346,30 @@ the game also sets, 6 of 500 UI draws painted anything. Taking alpha from the
 texture alone puts **Single Player / Multiplayer / View Installation / Show
 Credits** on the screen.
 
+**And it draws the scene behind the menu.** The frame used to be a menu panel
+on black, and the black had a name: `BeginStateBlock`/`EndStateBlock`/
+`ApplyStateBlock` were no-ops. Direct3D RECORDS state between Begin and End
+rather than applying it, so with recording unimplemented every state in every
+block was applied the instant it was recorded and never applied again -- and
+the live state at every draw was whatever the last block to be BUILT had
+wanted. The 3D backdrop was therefore drawn with the 2D front end's state:
+blending on, depth writes off, and an alpha test it never asked for. With
+state blocks implemented, the AT-ATs walk, the stormtroopers advance and the
+explosions burn behind the menu.
+
 **And it responds to a click.** That took finding out that there were two
-windows: the host's, which has the pixels, and the game's, which has the
-procedure Windows delivers input to. `--click X Y` posts a move, a press and a
-release to the game's own window -- not the host's, whose queue nobody pumps,
-because the main thread is inside lifted code for the whole run -- and
-`--uimap` prints the hot rectangles so the coordinates are read off the draws
-instead of guessed:
+windows -- visibly two, a fullscreen white one with "Force Commander" in
+yellow at the bottom (the game's own, with its GDI loading panel) and a
+smaller one beside it with the frames. The game's is the one Windows delivers
+input to. There is one now: `host_present` blits into the game's window and
+the host's is never shown when the game is going to make its own. An earlier
+note blamed cross-thread GDI for making that too slow to use, at 39 presents a
+run; the real culprit was `ShowWindow`, which SENDS its message to a thread
+that never pumps. Presenting into the game's window measures **4,400 presents
+in 130 s**.
+
+`--uimap` prints the hot rectangles so click coordinates are read off the
+draws instead of guessed:
 
 ```
 140,130  175x 30  centre 227,145    Single Player
@@ -381,6 +398,26 @@ return to the menu, which is what settles it. `docs/STARTUP.md` has the trace
 and the five things this is *not* -- including one earlier reading of the same
 trace that `--switchtrace` proved wrong.
 
+What it waits on is now located to a line. `--scripttracefrom MS
+--scripttracefor MS` bounds the script trace to the seconds around a click,
+and `tools/stepdecode.py` collapses 30,000 `[step]` lines into the sequence
+each block ran with a class name per line. A 25-line block that had been
+parked on a `Wait If` for the whole run wakes up on the click and enters a
+`While ... Wait ... EndWhile` that never exits. So the message is heard,
+something is waiting for the page, and the condition it waits on never becomes
+true.
+
+Two things were missing along the way and neither was the cause. `--nolib`
+proves no line the click takes names an unregistered subsystem. And the
+install was short 260 MB: `Resource\Music` and `Resource\Movies` had never
+been copied off the disc, and the music file names turn out to be the exact
+state names in the exe's own 63-entry state table -- `1202 - MasterScreen.imu`
+is `stateSinglePlayerScreen`. `tools/iso_extract.py` copies them out with
+their real names, which means reading the image's Joliet tree rather than its
+truncated 8.3 one. `timeSetEvent` delivers its callback now too, on a host
+thread with its own target stack and machine state, because iMUSE runs on that
+timer.
+
 Three other things had to be right for that, and `docs/STARTUP.md` has them:
 `IDirect3DVertexBuffer7` (the game locks one on its first rendered frame),
 `host_present` blitting straight to the window rather than through
@@ -397,18 +434,21 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Line 20 of the menu dispatcher.** Single Player and Multiplayer both stop
-   there. `Resource/Players` is empty and the disc does not carry it, and
-   `missionSelector.gtx` has `NoName`, `blankname` and `namealready`, so a
-   player profile is the best guess -- the two gated items are exactly the two
-   that would need a name.
+1. **The `While` loop that never exits.** A 25-line script block enters it on
+   the Single Player click and spins for the rest of the run. Its condition
+   goes through `sub_00655280`, the generic argument evaluator -- a sixteen-way
+   dispatch on `word[ecx] >> 12` through a table at 0x007C45D8 -- so naming
+   what it reads means decoding that argument node. That is the next step, and
+   it is the whole gate.
 2. **The text.** The front end's glyphs render as solid blocks or vanish
    depending on where its colour animation is, because the diffuse alpha is
-   forced opaque: with the faithful product (texture alpha times diffuse alpha)
-   the menu never appears at all in a whole run. Both are wrong; the honest fix
-   is a real texture-stage evaluator.
-3. **Miles (21 entries) and WINMM (7).** Still stubs. Nothing has needed them,
-   and returning "no device" cleanly should be enough for a first frame.
+   forced opaque. `--drawprobe` settled what that costs: the panel is FVF
+   0x112, which has no diffuse at all, so it looks the same either way, and the
+   TEXT is FVF 0x142 with a vertex diffuse alpha of zero in every batch sampled
+   across a run. Both readings are wrong; the honest fix is a real
+   texture-stage evaluator.
+3. **Miles (21 entries).** Still stubs, and the install now has its music, so
+   there is something for them to play.
 4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
    that a first playable does not need. Free.
 5. **Plan interface shims, not import shims** — and start at `CDD7MemRenderer`.

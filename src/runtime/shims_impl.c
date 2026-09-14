@@ -851,7 +851,11 @@ static void u32_CreateDialogParamA(void) {
  */
 #define MACH_STACK_BASE 0x08000000u      /* below the heap, above the image */
 #define MACH_STACK_SIZE 0x00100000u      /* 1 MB each, as the main one is */
-#define MACH_MAX_THREADS 8
+/* 32, not 8. The region runs to the heap at 0x10000000, which is room for
+ * 128. Eight was enough until the install had its music: with Resource\Music
+ * populated the streamer wants threads of its own, and the run died with
+ * "CreateThread -- NOT run (too many threads)" before it drew a frame. */
+#define MACH_MAX_THREADS 32
 
 typedef struct {
     uint32_t eax, ecx, edx, ebx, esi, edi, ebp, esp;
@@ -1095,10 +1099,18 @@ uint32_t mm_timer_create(uint32_t delay, uint32_t proc, uint32_t user,
                 !fn ? "not lifted" : g_no_threads ? "--nothreads" : "no slot");
         return 0;
     }
+    /* One stack per SLOT, not per timer. The game creates and kills this
+     * timer four times during audio startup; a stack each leaked four of the
+     * machine's thread slots and starved the ones the game wanted. */
+    static uint32_t slot_stack[MM_TIMER_MAX], slot_tib[MM_TIMER_MAX];
+    if (!slot_stack[slot]) {
+        slot_stack[slot] = mach_stack_new(&slot_tib[slot]);
+        if (!slot_stack[slot]) return 0;
+    }
     mm_timer* t = (mm_timer*)calloc(1, sizeof *t);
     if (!t) return 0;
-    t->stack_top = mach_stack_new(&t->tib);
-    if (!t->stack_top) { free(t); return 0; }
+    t->stack_top = slot_stack[slot];
+    t->tib = slot_tib[slot];
     t->fn = fn;
     t->id = slot + 1;
     t->user = user;
@@ -1135,28 +1147,16 @@ static void k32_CreateThread(void) {
         RET(h ? h2i(h) : 0); STDRET(6); return;
     }
 
-    /* Each simulated thread gets its own 1 MB of target stack. They sit below
-     * the heap so a stray pointer into one is still recognisable by region. */
-    long n = InterlockedIncrement(&g_mach_threads) - 1;
-    uint32_t base = MACH_STACK_BASE + (uint32_t)n * MACH_STACK_SIZE;
-    if (!VirtualAlloc((void*)(uintptr_t)base, MACH_STACK_SIZE,
-                      MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)) {
-        fprintf(stderr, "[k32] CreateThread: stack at 0x%08X failed (%lu)\n",
-                base, GetLastError());
-        RET(0); STDRET(6); return;
-    }
-
     thread_arg* a = (thread_arg*)calloc(1, sizeof *a);
+    if (!a) { RET(0); STDRET(6); return; }
     a->fn = fn;
     a->param = param;
-    a->stack_top = base + MACH_STACK_SIZE - 0x100;
-    /* Its own TIB, laid out like the main one in recomp_runtime.c. */
-    a->tib = crt_alloc(0x1000);
-    memset((void*)(uintptr_t)ADDR(a->tib), 0, 0x1000);
-    MEM32(a->tib + 0x00) = 0xFFFFFFFFu;              /* SEH: end of chain */
-    MEM32(a->tib + 0x04) = base + MACH_STACK_SIZE;   /* stack base */
-    MEM32(a->tib + 0x08) = base;                     /* stack limit */
-    MEM32(a->tib + 0x18) = a->tib;
+    a->stack_top = mach_stack_new(&a->tib);
+    if (!a->stack_top) {
+        fprintf(stderr, "[k32] CreateThread: no target stack left\n");
+        free(a);
+        RET(0); STDRET(6); return;
+    }
 
     /*
      * CREATE_SUSPENDED has to be honoured. The game creates this thread
@@ -1172,9 +1172,8 @@ static void k32_CreateThread(void) {
     DWORD flags = ARG(4) & CREATE_SUSPENDED;
     HANDLE th = CreateThread(NULL, 0, lifted_thread, a, flags, &tid);
     fprintf(stderr, "[k32] CreateThread(start=0x%08X, param=0x%08X)%s"
-                    " -> thread %lu, target stack 0x%08X..0x%08X\n",
-            start, param, flags ? " suspended" : "", tid,
-            base, base + MACH_STACK_SIZE);
+                    " -> thread %lu, target stack top 0x%08X\n",
+            start, param, flags ? " suspended" : "", tid, a->stack_top);
     if (ARG(5)) MEM32(ARG(5)) = (uint32_t)tid;
     RET(th ? h2i(th) : 0); STDRET(6);
 }
