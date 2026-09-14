@@ -431,10 +431,21 @@ its block's line count, its line number and the variable its first operand
 reads, because a script line's address is different every run and several
 25-line blocks exist.
 
-With it, the front end navigates for the first time: **SELECT PLAYER NAME**,
-then **ENTER PLAYER NAME** with a caret and a field that grows as you type,
-then a list row that selects. Not a mission yet -- the player is never
-committed -- but past the menu.
+With it, the front end navigates: **SELECT PLAYER NAME**, then **ENTER PLAYER
+NAME**, then the player page's forward arrow -- which fails a name check and
+draws "No Name Selected". That check's result is variable slot 12, assigned by
+a 7-line block called `Check That Name Exists` and read at line 40 of the
+182-line handler, so `--varat 182 40 12 1` answers it at that one line and
+nowhere else. (`--varpoke 12 1`, which pins the slot everywhere, segfaults the
+game in sixty-three writes: the whole front end shares it.)
+
+Then **SINGLE PLAYER**, then **Campaign**, and the next click is not a page at
+all. Every UI rectangle disappears and the frame becomes a fully 3D interior:
+curved hangar walls, a ramp, a holographic briefing table with a blue ring and
+a green tactical display. 1,331,273 primitives a frame, 306,510 of 307,200
+pixels lit, holding and fading in over hundreds of frames. `0007 -
+EmpireHangar` out of the exe's own state table -- **where a Force Commander
+campaign begins.**
 
 Two things were missing along the way and neither was the cause. `--nolib`
 proves no line the click takes names an unregistered subsystem. And the
@@ -463,23 +474,20 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Get a keystroke into the name field.** The gate is open: `--nocond
-   25 3 83` forces the disc wait's condition false and the front end
-   navigates -- Single Player gives SELECT PLAYER NAME, New Player gives
-   ENTER PLAYER NAME with a caret, and a list row selects. But no typed
-   character reaches the field: three characters grew the text run from 68 to
-   99 pixels and ten grew it to 50, so the width was the colour animation and
-   not the name. `Resource/Players` stays empty and the forward arrow says
-   "No Name Selected", which is the truth. WM_KEYDOWN/WM_CHAR/WM_KEYUP to the
-   game's own pumping window, a real DirectInput scan-code array, and a
-   synthetic GetKeyState have all been tried; GetKeyboardState and
-   GetAsyncKeyState are not imported. Logging every key message that reaches
-   the pump is the next step.
-2. **The text, because it is now the bottleneck.** Every step above was found
-   by clicking a `--uimap` rectangle and reading the result out of rectangle
-   *widths*: the glyphs land in the right places with the wrong glyph or none,
-   so "Single Player" renders as `Si l  yeP a e`. The run widths being right
-   puts it in the per-glyph texture coordinates rather than the transform.
+1. **Walk the hangar to a battle.** The campaign's briefing room renders; the
+   rest is the same click-at-a-`--uimap`-rectangle work the front end took.
+2. **The font sheets, stored upside down** -- which is what makes that work
+   slow, because the screen cannot be read. `--vtxdump` proves the glyph quads
+   are right (x-span/u-span is 3.75 on every glyph, matching y-span/v-span),
+   so it is the texture content, and a sheet's alpha channel dumps as ASCII
+   running bottom to top with every glyph inverted. The font files are 8-bit
+   BMPs and the model textures 24-bit through the same fill function,
+   `sub_00774640`.
+3. **A keystroke that reaches the name field.** The messages arrive --
+   `DispatchMessageA` shows WM_KEYDOWN, both WM_CHARs and WM_KEYUP with the
+   right scan code on the game's own pumping window -- and ten typed
+   characters still leave the field empty, so the break is inside the game's
+   key-to-script plumbing. Fixing it retires `--varat`.
 3. **The alpha, underneath that.** `--drawprobe` settled what the forced
    opaque diffuse costs: the panel is FVF 0x112, which has no diffuse at all,
    so it looks the same either way, and the TEXT is FVF 0x142 with a vertex

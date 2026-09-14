@@ -1057,83 +1057,75 @@ reading as held down whenever the pointer moved. Size is the discriminator.
 front-end flow is Single Player, then New Player, then type a name, then the
 forward arrow, and two separate lists cannot express that.
 
+## In game
+
+```
+build/focom.exe game/Focom.exe --run \
+    --nocond 25 3 83 --varat 182 40 12 1 \
+    --mousescale 1.25 --clickat 120000 --clickgap 15000 \
+    --click 227 145   # Single Player
+    --click 577 427   # forward  -> SINGLE PLAYER page
+    --click 227 145   # Campaign
+    --click 577 427   # forward  -> the Imperial hangar, in 3D
+```
+
+The last click does not open a page. Every UI rectangle disappears except the
+cursor and one arrow, and the frame becomes a fully 3D interior: curved hangar
+walls, a ramp, and a holographic briefing table with a blue ring and a green
+tactical display on its console. **1,331,273 primitives rasterised by present
+#24150, 306,510 of 307,200 pixels non-black**, holding and fading in over
+hundreds of frames. That is `0007 - EmpireHangar` / `stateEmpireHangar` out of
+the exe's own state table at 0x008595E0, which is where a Force Commander
+campaign begins.
+
+### The two gates, and what they stand in for
+
+Both flags are cheats and both say so in their own comments.
+
+**`--nocond 25 3 83`** steps over the disc check.
+`GamePPGlobalSysWhile::Execute` initialises its result to zero before
+evaluating, so writing 3 into the six-bit operand-count field of a
+control-flow line forces its condition false. The line is L3 of the 25-line
+thread `For CD`, whose condition reads the variable `Min CD Number`; the disc
+is present and the check fails for reasons that are ours.
+
+**`--varat 182 40 12 1`** answers the name check. The player page's handler is
+a 182-line block whose L39 calls `Check That Name Exists` (7 lines), whose L2
+assigns variable slot 12, and whose caller reads slot 12 at L40 and takes the
+Else -- which draws "No Name Selected". So slot 12 is the check's result, and
+one write at that one line opens the page.
+
+The surgical form matters: `--varpoke 12 1`, which pins a slot wherever ANY
+block reads it, **segfaulted the game in sixty-three writes**, because the
+whole front end shares slot 12. `--varat LINES LINE SLOT VALUE` writes only
+when a block of LINES lines reaches LINE.
+
+### The two real bugs underneath
+
+- **The font sheets are stored upside down.** `--vtxdump` proves the glyph
+  quads are right -- x-span/u-span is 3.75 on every glyph of a run, matching
+  y-span/v-span -- so it is the texture content, and dumping a sheet's alpha
+  channel as grey shows ASCII running bottom to top with every glyph inverted.
+  Flipping one sheet produces a perfect atlas. Not Blt's mirror (implemented
+  now; zero calls use it), not the state blocks deferring binds (100,000
+  SetTexture calls, zero recorded), not the sampler's convention (flipping
+  everything turns the 3D scene and the STAR WARS logo over too). The font
+  files are 8-bit BMPs and the model textures 24-bit through the same fill
+  function, `sub_00774640`; the palette-to-alpha path is where to look.
+- **A keystroke does not reach the name field.** The messages arrive:
+  `DispatchMessageA` shows `WM_KEYDOWN`, both `WM_CHAR`s and `WM_KEYUP` with
+  the right scan code, on the game's own pumping window, whose procedure
+  dispatches 7..0x100, 0x101 and 0x102..0x112. Ten typed characters leave the
+  field empty -- the width changes that looked like it filling were the colour
+  animation. The DirectInput keyboard is never read (`GetDeviceState` is
+  called with 16 and only 16), `GetKeyboardState` and `GetAsyncKeyState` are
+  not imported, and `GetKeyState` now answers from a synthetic array. So the
+  break is inside the game's own key-to-script plumbing.
+
 ## Where it is now
 
-Not in a mission.
-
-The front end renders its animated backdrop and its menu, in one window, at
-4,400 presents in 130 s. It takes a click and activates three of its five
-interactive elements. The two that lead to a game post their message, are
-heard, and wake a thread called **"For CD"** that then waits forever on a
-`While` whose condition reads the script variable **"Min CD Number"**. Two
-lines write that variable -- lines 12 and 34 of the menu dispatcher, right
-after the Single Player and Multiplayer cases -- and both keep writing
-`0xFFFFFFFF`.
-
-With `--nocond 25 3 83` past that wait the front end navigates, and the
-measured sequence is:
-
-```
-click 227,145   Single Player      -> SELECT PLAYER NAME, list empty
-click 470,305   New Player         -> ENTER PLAYER NAME, caret at 215,180
-key A B C                          -> the field at 80,180 grows 68 -> 99 px
-key Enter
-click 110,187                      -> the row selects: a 464x42 bar at 77,169
-click 625,305   Play               -> nothing further
-```
-
-So the page changes and the row selects. What does NOT happen is the field
-taking characters, and that is the finding -- an earlier reading of it was
-wrong.
-
-Typing three characters made the run at `80,180` grow from 68 to 99 pixels,
-which looked like the field filling. Typing **ten** made it 50 pixels. The
-width was the text animation all along: **no typed character reaches the name
-field.** `Resource/Players` stays empty and the forward arrow reports "No Name
-Selected", which is consistent -- the name really is blank.
-
-Everything reasonable has been tried and measured:
-
-- `WM_KEYDOWN` + the `WM_CHAR` `TranslateMessage` would have produced +
-  `WM_KEYUP`, posted to the game's own window with the right scan code in
-  `lParam`. That window belongs to a Ronin worker which pumps it every frame,
-  and `PeekMessageA`/`GetMessageA`/`DispatchMessageA` are all real.
-- The **DirectInput keyboard**, with a real 256-byte scan-code array. Measured
-  not to matter: `GetDeviceState` is only ever called with a size of 16, which
-  is `DIMOUSESTATE`, so the game never reads a keyboard through DirectInput.
-- **`GetKeyState`**, which used to forward to the host and therefore always
-  answered "not pressed", because `--key` posts messages rather than injecting
-  real input. It answers from a synthetic virtual-key array now.
-- `GetKeyboardState` and `GetAsyncKeyState` are not imported by this binary at
-  all, so they are not the path either.
-
-What is left to measure is whether the key messages are being **dispatched**:
-`DispatchMessageA` is logged for its first four calls and the four are 0x031F,
-0xC0CF, 0x000F and 0x0113 -- none of them a key. Logging every 0x100..0x112
-that reaches the pump is the next step, and if they are arriving then the
-game's own procedure is discarding them the way it discards the mouse.
-
-Two things would make that much faster than it has been, and both are known:
-
-- **The text.** Every step above was found by clicking at a rectangle
-  `--uimap` reported and reading the result out of rectangle *widths*, because
-  the glyphs are illegible -- letters land at the right place with the wrong
-  glyph or none, so "Single Player" renders as `Si l  yeP a e`. The run widths
-  are right, which puts it in the per-glyph texture coordinates rather than in
-  the transform. Legible text turns each of these runs from a guess into a
-  reading.
-- **The loop.** One click chain is nine minutes: the front end needs a hundred
-  seconds to reach its menu and each action is another thirteen. `--threadwatch`
-  was written to read the state out of the thread records instead of the
-  screen, and it is too slow as written -- it walks the whole committed heap
-  per snapshot. Indexing the blocks once would fix it.
-
-Booting a map directly is not a way round it, and the reason is structural.
-`tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the
-game gets 625,000 allocations of template compilation deep and exits cleanly,
-because that template's `inheritID` is `0 0 0` while the front end's
-(`2 1 6`, `Trasse - Day`) is `2 1 12` = `Endor - Dawn`. A loose
-`info.pro` on disk does not override the one in the .rpk -- replacing it with
-the word GARBAGE changes nothing, to the allocation -- and two `Run`
-directives load both templates (641,417 allocations against 625,100) and still
-render nothing. The route into a mission is through the front end.
+In the campaign's hangar, rendered in 3D, reached from the menu with two
+documented cheats standing in for two named bugs. What has not been done from
+here is walking the hangar to a briefing and into a battle -- the same
+click-at-a-rectangle work as the front end, and the same reason it is slow:
+the text is not legible yet.
