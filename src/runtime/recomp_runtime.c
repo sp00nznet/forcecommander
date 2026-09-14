@@ -174,10 +174,39 @@ static void focom_trace_extra(uint32_t va) {
          * a line is. */
         uint32_t args = entry ? MEM32(entry + 8) : 0;
         uint32_t op = T_OK(args) ? MEM32(args + 8) : 0xFFFFFFFFu;
+        /*
+         * And the argument NODE, which is what says where a condition reads
+         * from. sub_00655280 -- the handler [line+4] points at for the
+         * sub_005120D0 and sub_00512060 thunks -- takes (ctx, args, ...),
+         * reads the 16-bit word at args+0 and dispatches on its top nibble
+         * through a four-entry table at 0x007C45D8:
+         *
+         *   0  a script function call produces the value (sub_00506150)
+         *   1  a VARIABLE: [[ctx+0x14]+0x18] + [args+8]*4   (sub_00506000)
+         *   2  an immediate: [args+8]                       (sub_00506020)
+         *   3  inline data at args+4                        (sub_00506030)
+         *
+         * So for type 1 the slot address and its current value are both
+         * computable here, and a condition that never changes says which
+         * dword in the target never changes -- which --poison can then watch
+         * and --poke can force.
+         */
+        uint32_t node = T_OK(args) ? (MEM32(args) & 0xFFFFu) : 0;
+        uint32_t vaddr = 0, vval = 0;
+        if ((node >> 12) == 1 && T_OK(ctx)) {
+            uint32_t owner = MEM32(ctx + 0x14);
+            uint32_t arr = T_OK(owner) ? MEM32(owner + 0x18) : 0;
+            if (T_OK(arr)) {
+                vaddr = arr + (op & 0xFFFFu) * 4;
+                vval = T_OK(vaddr) ? MEM32(vaddr) : 0;
+            }
+        }
         fprintf(stderr, "[step] t%lu block=%08X line=%d of %u"
-                        " fn=%08X vt=%08X ivt=%08X op=%d\n",
+                        " fn=%08X vt=%08X ivt=%08X op=%d node=%04X"
+                        " var=%08X=%08X\n",
                 GetCurrentThreadId(), g_ecx, (int)ln, n,
-                entry ? MEM32(entry) : 0, vt, ivt, (int)op);
+                entry ? MEM32(entry) : 0, vt, ivt, (int)op, node,
+                vaddr, vval);
         return;
     }
     if (va != VIS_RUN_LINE) return;

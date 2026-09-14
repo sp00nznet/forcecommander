@@ -25,7 +25,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 RTTI = os.path.join(HERE, '..', 'analysis', 'rtti.json')
 STEP = re.compile(r'\[step\] t(\d+) block=([0-9A-F]+) line=(-?\d+) of (\d+)'
-                  r' fn=([0-9A-F]+) vt=([0-9A-F]+) ivt=([0-9A-F]+) op=(-?\d+)')
+                  r' fn=([0-9A-F]+) vt=([0-9A-F]+) ivt=([0-9A-F]+) op=(-?\d+)'
+                  r'(?: node=([0-9A-F]+) var=([0-9A-F]+)=([0-9A-F]+))?')
 
 
 def vtable_names(path=RTTI):
@@ -42,15 +43,19 @@ def decode(lines, names, want=None):
             if text.startswith('[click]') or text.startswith('[scripttrace]'):
                 yield None, None, None, None, text.rstrip(), None
             continue
-        t, blk, ln, n, _fn, _vt, ivt, op = m.groups()
+        t, blk, ln, n, _fn, _vt, ivt, op, node, var, val = m.groups()
         if want is not None and int(n) != want:
             continue
         key = (blk, ln)
         if key in seen:
             continue
         seen.add(key)
-        yield (t, blk, int(ln), int(n),
-               names.get(int(ivt, 16), 'ivt=' + ivt), int(op))
+        cls = names.get(int(ivt, 16), 'ivt=' + ivt)
+        if var and int(var, 16):
+            cls += '  var 0x%s = 0x%s' % (var, val)
+        elif node:
+            cls += '  node type %d' % (int(node, 16) >> 12)
+        yield t, blk, int(ln), int(n), cls, int(op)
 
 
 def main():
