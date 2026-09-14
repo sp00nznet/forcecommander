@@ -199,7 +199,14 @@ static DWORD WINAPI varxref(LPVOID unused) {
          * plain read -- and leaving them out of this scan is how the first
          * version reported four references when there were more.
          */
-        if (n <= 0) {
+        /*
+         * args+0 is the line's OWN node and args+8 its slot -- the
+         * DESTINATION for a line that assigns -- whether or not the line also
+         * carries an operand list. Checking it only when the list was empty
+         * was a hole: it is how a search for slot 83 came back with three
+         * readers and no writer.
+         */
+        {
             if ((MEM32(args) & 0xF000u) == 0x1000u
                 && MEM32(args + 8) == g_vx_slot) {
                 uint32_t obj = MEM32(a + 4);
@@ -212,15 +219,14 @@ static DWORD WINAPI varxref(LPVOID unused) {
                 for (b = 0; b < nbases; b++) if (bases[b] == base) break;
                 if (b == nbases && nbases < VX_BASES) bases[nbases++] = base;
                 fprintf(stderr, "[varxref] slot %u at line %08X: thunk %08X"
-                                " ivt=%08X simple sub=%u array %08X"
+                                " ivt=%08X DEST sub=%u array %08X"
                                 " index %u\n",
                         g_vx_slot, a, fn, T_OK(inner) ? MEM32(inner) : 0,
                         MEM32(args) & 0xFFFu, base, (a - base) / 32);
                 hits++;
             }
-            continue;
         }
-        if (n > 24) continue;
+        if (n <= 0 || n > 24) continue;
         for (int i = 0; i < n; i++) {
             uint32_t node = args + 0xC + (uint32_t)i * 12;
             if (!T_OK(node + 8)) break;
