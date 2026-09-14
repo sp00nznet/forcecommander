@@ -403,12 +403,24 @@ What it waits on is now located to a line. `--scripttracefrom MS
 and `tools/stepdecode.py` collapses 30,000 `[step]` lines into the sequence
 each block ran with a class name per line. A 25-line block that had been
 parked on a `Wait If` for the whole run wakes up on the click and enters a
-`While ... Wait ... EndWhile` that never exits. So the message is heard and
-something is waiting for the page. `--nodedump` then read that `While`'s
-condition straight out of the bytecode -- `GamePPGlobalSysWhile::Execute`
-keeps the operand count in `[args]`, the jump target in `[args+8]` and the
-operands at `args+0xC` -- and it is one operand: `Variable` slot 83, which the
-dispatcher reads as `0xFFFFFFFF` and which never changes.
+`While ... Wait ... EndWhile` that never exits. `--nodedump` read that
+`While`'s condition straight out of the bytecode --
+`GamePPGlobalSysWhile::Execute` keeps the operand count in `[args]`, the jump
+target in `[args+8]` and the operands at `args+0xC` -- and it is one operand,
+variable slot 83.
+
+And then everything got its name. `--threadlist` scans the heap for thread
+records and finds 4,011 script threads, 197 of them in the front end's own
+container, so the whole front end is a map: `Opening Screen` 111 lines
+running, `Cursor`, `Click`, `Wait`, `Monitor` running, every other page a
+state marker with an empty body and an `Enable X` event function behind it --
+and the thread that spins is **`For CD`**. `tools/gtxvars.py` reads the
+script's declaration table out of `Trasse - Night/Opening.gtx` and names slot
+83 **"Min CD Number"**. `Resource/appname.ini`, all 108 bytes, is three
+strings, and the third is "Please, insert the Force Commander CD to proceed".
+
+So it was never a player profile and never a page that fails to draw. The
+front end reaches its disc check.
 
 Two things were missing along the way and neither was the cause. `--nolib`
 proves no line the click takes names an unregistered subsystem. And the
@@ -437,12 +449,16 @@ loader answers one NULL by `FreeLibrary`-ing the whole thing.
 
 In order, and the first two are the ones that matter:
 
-1. **Script variable slot 83.** A 25-line block enters a `While` on the
-   Single Player click and spins for the rest of the run, and `--nodedump`
-   read its condition out of the bytecode: one operand, `Variable` slot 83.
-   The dispatcher reads that slot as `0xFFFFFFFF` -- a "nothing selected"
-   sentinel -- and it never changes. Finding what should assign it is the
-   whole gate.
+1. **"Min CD Number".** The thread that spins on the Single Player click is
+   called `For CD`, and `--nodedump` read its `While` condition out of the
+   bytecode: one operand, variable slot 83, which `tools/gtxvars.py` names
+   from the script's own declaration table as **Min CD Number**. Lines 12 and
+   34 of the menu dispatcher write it, right after the Single Player and
+   Multiplayer cases, and both keep writing `0xFFFFFFFF` -- forcing it to 1
+   gets overwritten 113 times in a run. Decoding line 11's five-operand
+   expression, which is what line 12 stores, is the whole gate.
+   `Resource/appname.ini` is three strings and the third is "Please, insert
+   the Force Commander CD to proceed".
 2. **The text.** The front end's glyphs render as solid blocks or vanish
    depending on where its colour animation is, because the diffuse alpha is
    forced opaque. `--drawprobe` settled what that costs: the panel is FVF

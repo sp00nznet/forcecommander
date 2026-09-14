@@ -809,7 +809,51 @@ Player case posts IS consumed, something IS waiting for the page, and what it
 waits for never becomes true. Three minutes after the click, `--uimap` reports
 no rectangle the run had not already drawn.
 
-### What that loop is waiting for: variable slot 83
+### The thread is called "For CD", and the whole front end is now a map
+
+`--threadlist MS` scans the heap for thread records, which `--varxref` found
+the shape of by accident and which is the most useful shape in it:
+
+```
++00 name (char*)   +0C container   +10 code block
++14 0   +18 0      +1C index       +20 context, or -1
+```
+
+A code block is recognisable by its `GamePPVisCodeBlock` vtable at +0, its
+line array at +0x18 and its count at +0x1C, so one pass names every script
+thread the game has: **4,011 of them, 197 in the front end's own container**.
+
+```
+Opening Screen         111 lines  ctx=1     the page we are on
+For CD                  25 lines  ctx=9     the loop that never exits
+Cursor 30 / Click 8 / Wait 12 / Monitor 16 / PreOpen 12 / Init 4   running
+Single Player Screen     0 lines  ctx=1     and so is every other page
+Handle Mouse Main Body 217 lines  ctx=-1    the menu dispatcher
+Enable Single           35 lines  ctx=-1    the event function for the page
+Enable Player Name      85 lines  Enable Multiplayer Set   127 lines
+Enable Confirm Exit     79 lines  Enable Score              96 lines
+```
+
+Two things fall out. The page threads (`Single Player Screen`,
+`Player Name`, `Scenario Screen`, `Loading Level`, `Transition to Load`) are
+state markers with EMPTY bodies, and the work is in the `Enable X` event
+functions, which are invoked rather than run -- so "the page's script never
+started" was the wrong shape of question. And the loop that spins is called
+**"For CD"**, which is the second thing:
+
+`Resource/appname.ini`, all 108 bytes of it, is three strings:
+
+```
+Star Wars: Force Commander
+Loading '%s'. Please wait...
+Please, insert the Force Commander CD to proceed
+```
+
+So the front end reaches its disc check. That was never the guess -- the
+guesses were a player profile and a page that fails to draw -- and the docs
+carried both.
+
+### What that loop is waiting for: "Min CD Number"
 
 `GamePPGlobalSysWhile::Execute` is `sub_005D2D30`, and it says where a
 control-flow line keeps its parts:
@@ -842,10 +886,44 @@ subsystem id, the same encoding `sub_00655280` dispatches on:
 
 `0x1022` is kind 1, subsystem 34 = `Variable`, and the slot is **83**.
 
-**Variable slot 83 is the gate.** The 217-line dispatcher reads it at L12 as
-`0xFFFFFFFF`, which is the shape of a "nothing selected" sentinel, and it is
-still `0xFFFFFFFF` every time the loop comes round. Something should assign it
-and does not.
+And slot 83 has a name. `Trasse - Night/Opening.gtx` in the .rpk is the front
+end's script container, and near its front is a flat declaration table --
+893 fixed 34-byte records of
+
+```
+[4-byte tag][u16 a][u16 kind][u16 scope][u16 slot][22-byte padded name]
+```
+
+-- where `kind` is a subsystem id and, for a variable, `slot` is the runtime
+index. `tools/gtxvars.py` reads it, and an operand word turns out to be
+`[decl index:16][kind:4][subsystem id:12]`, so the trace and the table join up
+exactly: the While's operand 0 has decl index 839, and record 839 is at
+offset 0x7000, which is
+
+```
+007000 kind=34 slot=83   Min CD Number
+006FDE kind=34 slot=236  CD Number
+006076 kind=36 slot=621  CDInserted
+006F9A kind=59 slot=849  For CD
+```
+
+**The gate is "Min CD Number", and it is 0xFFFFFFFF.** Exactly one
+declaration in the table has kind 34 and slot 83, so there is no ambiguity.
+
+And it is not simply unset. With the destination hole in `--varxref` closed
+(a line's own node is at args+0 and its slot at args+8, the DESTINATION, whether
+or not an operand list follows) the writers are **lines 12 and 34 of "Handle
+Mouse Main Body"** -- the line after the Single Player case's line 11 and the
+line after the Multiplayer case's line 33. Line 11 READS Min CD Number among
+its five operands and writes a temp; line 12 writes Min CD Number back. And it
+writes 0xFFFFFFFF: forcing slot 83 to 1 at every read gets written back to
+0xFFFFFFFF before the next iteration of the While, 113 times in one run.
+
+So the gate is not an unset variable. It is a computation that keeps producing
+-1, and decoding line 11's five-operand expression is the next step.
+`CD Number` (slot 236) is never read by any line that runs, which is worth
+knowing: whatever line 11 computes from, it is not the number of the disc in
+the drive.
 
 Two things about forcing it, both learned the hard way. `--poison` and
 `--poke` cannot reach a script variable at all: it lives in the block's own
@@ -909,10 +987,12 @@ Not in a mission.
 The front end renders its animated backdrop and its menu, in one window, at
 4,400 presents in 130 s. It takes a click and activates three of its five
 interactive elements. The two that lead to a game post their message, are
-heard, and wake a script block that then waits forever on a `While` whose
-condition reads **script variable slot 83**, which holds `0xFFFFFFFF` and
-never changes. Finding what should assign it is the next step, and it is the
-whole gate.
+heard, and wake a thread called **"For CD"** that then waits forever on a
+`While` whose condition reads the script variable **"Min CD Number"**. Two
+lines write that variable -- lines 12 and 34 of the menu dispatcher, right
+after the Single Player and Multiplayer cases -- and both keep writing
+`0xFFFFFFFF`. Decoding line 11's five-operand expression, which is what line
+12 stores, is the next step and it is the whole gate.
 
 Booting a map directly is not a way round it, and the reason is structural.
 `tools/make_focom_ini.py --run "2 1 7"` points `Run` at `Tatooine - Day`; the
