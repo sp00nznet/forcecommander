@@ -7,7 +7,38 @@ Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, and
 next to [xwa](https://github.com/sp00nznet/xwa) — same publisher, same year,
 same studio's tooling.
 
-## Project Status: **It renders.** The splash screen, drawn by lifted code.
+## Project Status: **It is in game.** The campaign's briefing room, in 3D.
+
+```
+build/focom.exe game/Focom.exe --run \
+    --nocond 25 3 83 --varat 182 40 12 1 \
+    --mousescale 1.25 --clickat 120000 --clickgap 15000 \
+    --click 227 145   # Single Player
+    --click 577 427   # forward  -> SINGLE PLAYER page
+    --click 227 145   # Campaign
+    --click 577 427   # forward  -> the Imperial hangar, in 3D
+```
+
+The last click does not open another page. Every UI rectangle disappears
+except the cursor and one arrow, and the frame becomes a fully 3D interior:
+curved hangar walls, a ramp, and a holographic briefing table with a blue ring
+and a green tactical display on its console. **1,331,273 primitives rasterised
+by present #24150, 306,510 of 307,200 pixels non-black**, holding and fading
+in over hundreds of frames. That is `0007 - EmpireHangar` /
+`stateEmpireHangar` out of the exe's own 63-entry state table at 0x008595E0 --
+where a Force Commander campaign begins.
+
+Two flags in that command are cheats, and both say so in their own comments.
+`--nocond` steps over a disc check for a disc that is present; `--varat`
+answers a name check for a name the front end will not accept typed input for.
+They stand in for two bugs that are located to the point of proof and written
+up in [`docs/STARTUP.md`](docs/STARTUP.md): the font sheets are stored upside
+down, and a keystroke reaches the window procedure but not the name field.
+
+No screenshot of it here: a rendered frame of the game's own artwork is retail
+content, and this repository does not carry any.
+
+## Before that: the splash screen, drawn by lifted code.
 
 ![The splash screen, drawn by recompiled Force Commander code](docs/img/splash.png)
 
@@ -28,9 +59,9 @@ $ build/focom game/Focom.exe --splash
   real shims installed:         71
 ```
 
-Two functions lifted to get here (the dialog proc and `__chkstk`), 71 of 307
-imports with real bodies. **Getting in-game is a different order of work** — see
-[The road to in-game](#the-road-to-in-game).
+Two functions lifted to get *there* (the dialog proc and `__chkstk`), 71 of
+307 imports with real bodies. Getting in game was a different order of work —
+see [The road to in-game](#the-road-to-in-game).
 
 | | |
 |---|---:|
