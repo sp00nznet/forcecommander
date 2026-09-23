@@ -40,13 +40,12 @@ content, and this repository does not carry any.
 
 ## Before that: the splash screen, drawn by lifted code.
 
-![The splash screen, drawn by recompiled Force Commander code](docs/img/splash.png)
-
-*640×480, pixel-exact. Every pixel is produced by `sub_00401770` — Force
-Commander's own splash dialog procedure, lifted to C — running on a host that
-owns nothing but the window. The title text is the game's too: `CreateFontA`
-sized from the window rect, then `TextOutA` twice, black then yellow one pixel
-up and left, for the drop shadow.*
+The first thing it ever drew. 640×480, pixel-exact, and every pixel is produced
+by `sub_00401770` — Force Commander's own splash dialog procedure, lifted to C —
+running on a host that owns nothing but the window. The title text is the
+game's too: `CreateFontA` sized from the window rect, then `TextOutA` twice,
+black then yellow one pixel up and left, for the drop shadow. (A capture of it
+used to live here; it is the game's own splash art, so it went.)
 
 ```
 $ build/focom game/Focom.exe --splash
@@ -72,6 +71,8 @@ see [The road to in-game](#the-road-to-in-game).
 | methods attributed to one class | 4,832 |
 | functions attributed to a source file | 738 |
 | game-specific classes | **6** |
+| lifted, whole binary | **39,038 functions, 10.7M lines of C, 0 errors** |
+| real import bodies | all 307 bridged; DirectDraw 7, Direct3D 7, DirectInput, DirectSound, DirectPlay, SMUSH as COM/DLL shims |
 
 **Read [`docs/RECON.md`](docs/RECON.md) first.** It is the primary P1 document:
 the `RE3D`/`Ronin`/`GEAPI`/`DX7` namespace map, the renderer's interface seam,
@@ -113,13 +114,13 @@ DirectPlay, DirectMusic and the video path arrive through `CoCreateInstance`.
 RECON.md makes this point from the GUIDs in `.rdata`; the import table confirms
 it from the other side.
 
-The consequence for bring-up: `runtime/compat/win32_compat.h` sorts 275
-**imported** Win32 APIs into keep/shim/SDL2/stub, and that machinery does not
-reach an interface pointer called through a vtable. Budget for interface shims.
-`runtime/hybrid/` — built for Encarta 97's MFC boundary — is the nearest
-existing machinery. RECON.md's point that `CDD7MemRenderer` gives a software
-path means the first shim can be "hand it a lockable surface", not "implement
-Direct3D 7".
+The consequence for bring-up, as written at P0: `runtime/compat/win32_compat.h`
+sorts 275 **imported** Win32 APIs into keep/shim/SDL2/stub, and that machinery
+does not reach an interface pointer called through a vtable. Budget for
+interface shims. That is what happened: `src/runtime/ddraw_shims.c` builds the
+DirectDraw 7, Direct3D 7 (all 49 device methods), DirectInput, DirectSound and
+DirectPlay objects inside the target's address space, and `raster.c` is the
+software rasteriser behind them.
 
 ---
 
@@ -519,39 +520,79 @@ In order, and the first two are the ones that matter:
    right scan code on the game's own pumping window -- and ten typed
    characters still leave the field empty, so the break is inside the game's
    key-to-script plumbing. Fixing it retires `--varat`.
-3. **The alpha, underneath that.** `--drawprobe` settled what the forced
+4. **The alpha, underneath that.** `--drawprobe` settled what the forced
    opaque diffuse costs: the panel is FVF 0x112, which has no diffuse at all,
    so it looks the same either way, and the TEXT is FVF 0x142 with a vertex
    diffuse alpha of zero in every batch sampled across a run. Both readings
    are wrong; the honest fix is a real texture-stage evaluator.
-3. **Miles (21 entries).** Still stubs, and the install now has its music, so
+5. **Miles (21 entries).** Still stubs, and the install now has its music, so
    there is something for them to play.
-4. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
+6. **Stub `GamePPVis*` entirely.** 25 classes and 1,053 vtable slots of *editor*
    that a first playable does not need. Free.
-5. **Plan interface shims, not import shims** — and start at `CDD7MemRenderer`.
-   `docs/STL-GATE.md` makes the case for going further and loading the real
-   32-bit DLLs instead.
-6. **DirectPlay is a dead service.** Whatever replaces it is a design decision,
+7. **A 32-bit host.** `docs/STL-GATE.md` makes the case for loading the real
+   32-bit DLLs instead of reimplementing them, since every blocker so far was
+   a reimplementation infidelity.
+8. **DirectPlay is a dead service.** Whatever replaces it is a design decision,
    not a recompilation one.
-7. Disc 2 has not been unpacked.
+9. Disc 2 has not been unpacked.
 
 `Smush.dll` needs no reverse engineering — RECON.md has the container decoded
 and ScummVM has implemented SMUSH for twenty years.
 
 ---
 
+## Building and running it
+
+You need your own copy of the game: both discs, or an installed copy. Nothing
+of it is in this repository. [pcrecomp](https://github.com/sp00nznet/pcrecomp)
+must be checked out next to this one as `../tools` -- the lifter, the
+disassembler and the 32-bit runtime (`runtime/recomp32/`) all come from there.
+Python needs `capstone`; the host builds with MinGW-w64 GCC and Ninja.
+
+```
+# 1. Assemble an install under game/ (see docs/STARTUP.md for the layout):
+#    Focom.exe and its DLLs from your disc or installed copy, then Resource.
+#    Resource\Music and Resource\Movies are ~260 MB and easy to miss.
+py -3 tools/iso_extract.py original/fc1.iso RESOURCE game/Resource
+py -3 tools/make_focom_ini.py <absolute path to game> > game/Focom.ini
+
+# 2. Catalog, import bridge, lift (the lift is ~10.7M lines; it is not committed)
+py -3 ../tools/tools/disasm/disasm32.py game/Focom.exe -o analysis/functions.json
+py -3 gen_imports.py
+py -3 run_lift.py --all
+
+# 3. Build, and run from the project root -- not from game/
+cmake -B build -G Ninja && cmake --build build
+build/focom.exe game/Focom.exe --run --watchdog 180
+```
+
+The command at the top of this page is the one that reaches the hangar.
+`docs/STARTUP.md` ("Running it") has the diagnostic flags and the two ways the
+build fails silently on a mixed MSYS2/Windows `PATH`.
+
 ## Layout
 
 ```
 forcecommander/
-  original/   both discs (.bin/.cue, and fc1.iso converted from disc 1)
-  game/       extracted binaries
-  analysis/   catalog, sections, imports, rtti.json, vtables.json, seeds
+  run_lift.py        lift driver over pcrecomp's tools/lift/generate.py
+  gen_imports.py     generates src/runtime/imports_gen.c (the 307-import bridge)
+  src/runtime/       the host: image mapping, threads, shims, COM objects,
+                     the software rasteriser -- all hand-written
+  src/recomp/gen/    lifted C, generated and gitignored
+  tools/             rpk.py, iso_extract.py, make_focom_ini.py, gtxvars.py,
+                     stepdecode.py, scriptmap.py, whoslot.py, com_purge_check.py
+  analysis/          catalog, sections, imports, rtti.json, vtables.json, seeds
+  original/, game/   your discs and your install (gitignored)
   docs/
-    RECON.md  the primary P1 document -- namespaces, renderer seam, formats
+    RECON.md         what is inside Focom.exe: namespaces, renderer seam, formats
+    STARTUP.md       startup, Focom.ini, the install layout, every bring-up fix,
+                     the front end's script, and how to run it
+    STL-GATE.md      the MSVCP60 gate, and the case for a 32-bit host
 ```
 
 ## Credits
 
 Star Wars: Force Commander © 2000 LucasArts Entertainment Company. This project
-neither contains nor distributes any part of it.
+neither contains nor distributes any part of it. The generated C is a
+derivative of the game's binary and is produced from your own copy, never
+committed; see [LICENSE](LICENSE).

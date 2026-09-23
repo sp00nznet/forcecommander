@@ -22,20 +22,21 @@ SOFTWARE.
 
 ---
 
-This licence covers what is actually ours in this repository: the pipeline
-driver, the Win16 runtime and shims, the tools, the build files and the
-documentation. It does NOT cover Bang! Bang! itself.
+This licence covers what is actually ours in this repository: the lift and
+import-bridge drivers, the host runtime and its shims (src/runtime/), the
+tools, the build files, the analysis metadata and the documentation. It does
+NOT cover Star Wars: Force Commander itself.
 
-Bang! Bang! (1990) is a Windows 3.0 cannon-fire game and is not ours to
-license. Its executable, help file, resources and art are not in this
-repository and are excluded by .gitignore. Shareware is not public domain: a
-1990 shareware release still carries its author's copyright.
+Star Wars: Force Commander is (c) 2000 LucasArts Entertainment Company, now part
+of Disney, and is not ours to license. Its executables, DLLs, archives, movies,
+music and art are not in this repository and are excluded by .gitignore.
 
 Two consequences worth being explicit about:
 
-  * You need your own copy of BANGBANG.EXE to use any of this. Drop it in
-    original/ and the pipeline reads it from there.
+  * You need your own copy of the game to use any of this. Put your discs in
+    original/ and assemble an install in game/; the pipeline reads it from
+    there.
 
   * Lifted code is a derivative work of the binary it came from. Anything this
-    pipeline emits into src/recomp/ carries whatever licence the original
+    pipeline emits into src/recomp/gen/ carries whatever licence the original
     carries, not this one. The MIT grant above stops at the tools.
